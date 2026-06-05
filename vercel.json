@@ -1,8 +1,22 @@
 {
-    "rewrites": [
-      {
-        "source": "/backend/(.*)",
-        "destination": "/api/backend/src/api/routes.py"
-      }
-    ]
-  }
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/next"
+    },
+    {
+      "src": "backend/src/api/routes.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/backend/(.*)",
+      "destination": "backend/src/api/routes.py"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "frontend/$1"
+    }
+  ]
+}
