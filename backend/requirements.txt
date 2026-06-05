@@ -20,3 +20,6 @@ bm25s
 ipython
 pymupdf
 Pillow
+pyyaml>=6.0.1
+setuptools>=68.0.0
+wheel>=0.42.0
