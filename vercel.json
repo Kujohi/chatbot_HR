@@ -1,0 +1,8 @@
+{
+    "rewrites": [
+      {
+        "source": "/backend/(.*)",
+        "destination": "/api/backend/src/api/routes.py"
+      }
+    ]
+  }
