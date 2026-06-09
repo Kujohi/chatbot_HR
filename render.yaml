@@ -1,5 +1,0 @@
-services:
-  - type: web
-    name: menas-hr-bot
-    runtime: docker
-    # Render will build the Dockerfile at the root of the repo
