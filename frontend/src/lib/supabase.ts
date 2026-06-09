@@ -1,6 +1,6 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from "@supabase/supabase-js";
+import { getRuntimeConfig } from "./runtime-config";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder'
+const { supabaseUrl, supabaseAnonKey } = getRuntimeConfig();
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
