@@ -276,10 +276,10 @@ export default function ChatUI() {
   };
 
   useEffect(() => {
-    if (activeTab === "documents" && userProfile?.role === "admin") {
+    if (activeTab === "documents") {
       loadCurrentDirectory();
     }
-  }, [activeTab, userProfile, currentFolderId]);
+  }, [activeTab, currentFolderId]);
 
   const handleDeleteDocument = async (id: string) => {
     if (!confirm("Are you sure you want to delete this document?")) return;
@@ -723,14 +723,12 @@ export default function ChatUI() {
           >
             <MessageSquare size={16} /> Chat
           </button>
-          {userProfile?.role === 'admin' && (
-            <button 
-              onClick={() => setActiveTab("documents")}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${activeTab === 'documents' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              <FileText size={16} /> Documents
-            </button>
-          )}
+          <button 
+            onClick={() => setActiveTab("documents")}
+            className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${activeTab === 'documents' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <FileText size={16} /> Documents
+          </button>
         </div>
 
         {/* History List (Only show in Chat tab) */}
@@ -807,27 +805,33 @@ export default function ChatUI() {
               <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">Documents</h2>
-                  <p className="text-gray-500 text-sm mt-1">Browse folders and upload PDFs</p>
+                  <p className="text-gray-500 text-sm mt-1">
+                    {userProfile?.role === "admin" ? "Browse folders and upload PDFs" : "Browse folders and view PDFs"}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => setIsNewFolderModalOpen(true)}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
-                  >
-                    <FolderPlus size={18} />
-                    New folder
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsUploadModalOpen(true)}
-                    disabled={currentFolderId == null}
-                    title={currentFolderId == null ? "Open a folder to upload" : "Upload PDF"}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5b61f4] text-white text-sm font-medium hover:bg-[#4b51e4] disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-md shadow-blue-500/20"
-                  >
-                    <Upload size={18} />
-                    Upload
-                  </button>
+                  {userProfile?.role === "admin" && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setIsNewFolderModalOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                      >
+                        <FolderPlus size={18} />
+                        New folder
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsUploadModalOpen(true)}
+                        disabled={currentFolderId == null}
+                        title={currentFolderId == null ? "Open a folder to upload" : "Upload PDF"}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5b61f4] text-white text-sm font-medium hover:bg-[#4b51e4] disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-md shadow-blue-500/20"
+                      >
+                        <Upload size={18} />
+                        Upload
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={loadCurrentDirectory}
@@ -877,9 +881,11 @@ export default function ChatUI() {
                   <Folder size={40} className="mx-auto text-gray-300 mb-3" />
                   <p className="text-gray-600 font-medium">This folder is empty</p>
                   <p className="text-gray-400 text-sm mt-1">
-                    {currentFolderId == null
-                      ? "Create a folder or open one to upload files."
-                      : "Use Upload to add a PDF here."}
+                    {userProfile?.role === "admin"
+                      ? (currentFolderId == null
+                        ? "Create a folder or open one to upload files."
+                        : "Use Upload to add a PDF here.")
+                      : "No documents inside this folder."}
                   </p>
                 </div>
               ) : (
@@ -903,7 +909,7 @@ export default function ChatUI() {
                         <p className="text-xs text-gray-400">{getFolderMeta(folder)}</p>
                       </div>
                       <span className="text-xs text-gray-400 hidden sm:inline">Folder</span>
-                      {!(folder.slug === "general" && folder.parent_id == null) && (
+                      {userProfile?.role === "admin" && !(folder.slug === "general" && folder.parent_id == null) && (
                         <button
                           type="button"
                           onClick={(e) => handleDeleteFolder(folder, e)}
@@ -941,14 +947,16 @@ export default function ChatUI() {
                         >
                           <Search size={16} />
                         </a>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteDocument(doc.id)}
-                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        {userProfile?.role === "admin" && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDocument(doc.id)}
+                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
+                            title="Delete"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}

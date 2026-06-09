@@ -13,7 +13,6 @@ from src.services.document_processing_service import (
 )
 from src.services.folder_service import get_folder, build_storage_path
 from src.services.rewriter import rewrite_path_to_summary
-from src.pdf_image import is_scanned_pdf
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -153,6 +152,7 @@ def get_documents_by_storage_paths(storage_paths: list[str]) -> list[dict]:
 
 
 def get_scanned_storage_paths(storage_paths: list[str]) -> list[str]:
+    from src.services.image_document_service import is_scanned_pdf
     docs = get_documents_by_storage_paths(storage_paths)
     scanned_paths: list[str] = []
     for doc in docs:
@@ -365,6 +365,7 @@ def index_docs(document_id: str) -> None:
     if not file_url:
         raise Exception(f"Document {document_id} has no file_url")
 
+    from src.services.image_document_service import is_scanned_pdf
     is_image_pdf = is_scanned_pdf(file_url)
     supabase.table("documents").update({"is_image_pdf": is_image_pdf}).eq(
         "id", document_id

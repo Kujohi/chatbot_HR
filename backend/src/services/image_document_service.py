@@ -1,21 +1,36 @@
 """Load scanned PDFs as stitched images for multimodal RAG."""
 
+from langchain_community.document_loaders import PyMuPDFLoader
 import logging
 from typing import List, Dict
 
-from src.pdf_image import pdf_to_vertical_image_base64
 from src.services.document_service import (
     get_documents_by_storage_paths,
     get_scanned_storage_paths,
 )
 
 logger = logging.getLogger(__name__)
+MIN_PAGE_TEXT_CHARS = 100
+
+def is_scanned_pdf(pdf_source: str) -> bool:
+    """
+    True when the PDF has no meaningful extractable text (image capture / scan).
+    Uses the same heuristic as manual inspection: no page exceeds MIN_PAGE_TEXT_CHARS.
+    """
+    loader = PyMuPDFLoader(pdf_source)
+    docs = loader.load()
+    if not docs:
+        return True
+    text_pages = sum(
+        1 for doc in docs if len(doc.page_content.strip()) > MIN_PAGE_TEXT_CHARS
+    )
+    return text_pages == 0
 
 
 def load_scanned_document_images(storage_paths: List[str]) -> List[Dict]:
     """
-    For each scanned-document storage path, render the full PDF as one vertical image.
-    Returns dicts with title, storage_path, base64, and mime_type for LLM vision input.
+    For each scanned-document storage path, load the document reference.
+    Returns dicts with title, storage_path, and file_url for LLM vision input.
     """
     if not storage_paths:
         return []
@@ -32,19 +47,14 @@ def load_scanned_document_images(storage_paths: List[str]) -> List[Dict]:
         storage_path = doc.get("storage_path")
         if not file_url or not storage_path:
             continue
-        try:
-            image_base64, mime_type = pdf_to_vertical_image_base64(file_url)
-            references.append(
-                {
-                    "document_id": doc.get("id"),
-                    "title": doc.get("title") or storage_path,
-                    "storage_path": storage_path,
-                    "base64": image_base64,
-                    "mime_type": mime_type,
-                }
-            )
-            logger.info(f"Loaded scanned PDF image reference for {storage_path}")
-        except Exception as error:
-            logger.error(f"Failed to render scanned PDF {storage_path}: {error}")
+        references.append(
+            {
+                "document_id": doc.get("id"),
+                "title": doc.get("title") or storage_path,
+                "storage_path": storage_path,
+                "file_url": file_url,
+            }
+        )
+        logger.info(f"Loaded scanned PDF file reference for {storage_path}")
 
     return references

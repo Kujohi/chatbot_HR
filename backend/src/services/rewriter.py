@@ -13,7 +13,7 @@ def summarized_question(history, question):
     Rewrite a question to a standalone question
     """
     system_prompt = """
-Bạn là trợ lý AI chuyên viết lại câu hỏi liên quan đến quy định công ty Menas.
+Bạn là trợ lý AI chuyên viết lại câu hỏi liên quan đến quy định của công ty.
 
 Nhiệm vụ của bạn là chuyển câu hỏi hoặc tin nhắn hiện tại của người dùng thành một phiên bản có thể hiểu độc lập mà không cần đọc lịch sử hội thoại.
 
@@ -48,7 +48,7 @@ def rewrite_query_hypo_answers(standalone_question: str, num_hypo_answers: int =
     Rewrite a question to multiple hypothesis answers
     """
     system_prompt = f"""
-    Bạn là trợ lý AI chuyên về hỏi đáp quy định công ty Menas. 
+    Bạn là trợ lý AI chuyên về hỏi đáp quy định công ty. 
     1. Nhiệm vụ của bạn là viết lại câu hỏi thành {num_hypo_answers} câu trả lời giả định khác nhau để thuận tiện trong việc truy vấn.
     2. Ưu tiên nếu câu hỏi gồm nhiều ý hãy phân tách thành các trả lời con cho từng ý.
     3. Nếu câu hỏi chỉ có một ý thì viết lại thành nhiều biến thể trả lời giả định.

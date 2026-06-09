@@ -51,9 +51,8 @@ def _build_rag_user_content(
         )
         content_blocks.append(
             {
-                "type": "image",
-                "base64": image_doc["base64"],
-                "mime_type": image_doc["mime_type"],
+                "type": "image_url",
+                "image_url": image_doc["file_url"],
             }
         )
 
