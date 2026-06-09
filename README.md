@@ -160,7 +160,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY="eyJhbGciOiJIUz..."
 # URL của Backend API (dùng để Next.js proxy request sang Backend)
 # Chạy local không docker: http://127.0.0.1:8000
 # Chạy bằng docker-compose: http://backend:8000
-BACKEND_URL="http://127.0.0.1:8000"
+NEXT_PUBLIC_BACKEND_URL="http://127.0.0.1:8000"
 ```
 
 ---
@@ -171,7 +171,7 @@ Chọn một trong các cách dưới đây để chạy hệ thống ở máy c
 
 ### Cách 1: Chạy bằng Docker Compose (Khuyên dùng)
 Yêu cầu đã cài đặt **Docker** và **Docker Desktop**.
-1. Đảm bảo file `frontend/.env.local` có cấu hình `BACKEND_URL=http://backend:8000`.
+1. Đảm bảo file `frontend/.env.local` có cấu hình `NEXT_PUBLIC_BACKEND_URL=http://backend:8000`.
 2. Tại thư mục gốc của dự án, chạy lệnh:
    ```bash
    docker-compose up --build
@@ -206,7 +206,7 @@ Yêu cầu cài đặt **Python 3.10+** và **Node.js 20+**.
    ```bash
    cd frontend
    ```
-2. Đảm bảo cấu hình `BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local`.
+2. Đảm bảo cấu hình `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local`.
 3. Cài đặt thư viện và chạy môi trường dev:
    ```bash
    npm install
@@ -218,7 +218,7 @@ Yêu cầu cài đặt **Python 3.10+** và **Node.js 20+**.
 
 ### Cách 3: Chạy thử Docker Single Container (Giống môi trường Render)
 Để kiểm tra xem container gộp có chạy đúng trước khi deploy:
-1. Đảm bảo cấu hình `BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local`.
+1. Đảm bảo cấu hình `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local`.
 2. Build Docker image từ thư mục gốc:
    ```bash
    docker build -t menas-hr-bot:latest .
@@ -247,7 +247,7 @@ Dự án đã được thiết kế tối ưu hóa để deploy lên **Render** 
    * Các biến môi trường frontend cần thiết:
      - `NEXT_PUBLIC_SUPABASE_URL`
      - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-     - `BACKEND_URL` = `http://127.0.0.1:8000` (FastAPI chạy nội bộ bên trong cùng container).
+     - `NEXT_PUBLIC_BACKEND_URL` = `http://127.0.0.1:8000` (FastAPI chạy nội bộ bên trong cùng container).
 5. Nhấn **Deploy** và đợi Render build & start. Hệ thống sẽ tự nhận cổng dịch vụ thông qua biến `$PORT` được Render cấp phát và chuyển tiếp yêu cầu đến Next.js trên cổng đó.
 
 ---
