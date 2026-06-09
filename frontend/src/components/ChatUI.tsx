@@ -133,7 +133,6 @@ export default function ChatUI() {
   
   // Document Upload State
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadTitle, setUploadTitle] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [uploadStatus, setUploadStatus] = useState<{type: "success" | "error" | null, message: string}>({type: null, message: ""});
@@ -597,10 +596,9 @@ export default function ChatUI() {
     setUploadProgress(`Uploading 0/${uploadFiles.length}…`);
 
     try {
-      if (uploadFiles.length === 1 && uploadTitle.trim()) {
+      if (uploadFiles.length === 1) {
         const formData = new FormData();
         formData.append("file", uploadFiles[0]);
-        formData.append("title", uploadTitle.trim());
         formData.append("owner_id", "default_user");
         formData.append("folder_id", String(currentFolderId));
         formData.append("source_type", "pdf");
@@ -651,7 +649,6 @@ export default function ChatUI() {
       }
 
       setUploadFiles([]);
-      setUploadTitle("");
       setUploadProgress("");
       setIsUploadModalOpen(false);
       loadCurrentDirectory();
@@ -1040,18 +1037,6 @@ export default function ChatUI() {
                     </span>
                   </p>
                   <form onSubmit={handleFileUpload} className="space-y-4">
-                    {uploadFiles.length <= 1 && (
-                      <div>
-                        <label className="text-sm font-semibold text-gray-700">Title (single file)</label>
-                        <input
-                          type="text"
-                          value={uploadTitle}
-                          onChange={(e) => setUploadTitle(e.target.value)}
-                          placeholder="Document title (optional)"
-                          className="mt-1 w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#5b61f4]/20 focus:border-[#5b61f4]"
-                        />
-                      </div>
-                    )}
                     <div className="relative border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer">
                       <input
                         type="file"

@@ -3,7 +3,7 @@ import logging
 import getpass
 import os
 
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone
 from dotenv import load_dotenv
 from langchain_pinecone import PineconeVectorStore
 from langchain_google_genai import GoogleGenerativeAIEmbeddings

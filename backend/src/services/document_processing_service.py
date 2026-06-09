@@ -1,9 +1,6 @@
-# from langchain_experimental.text_splitter import SemanticChunker
-from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import getpass
 import os
 import logging
 from uuid import uuid4

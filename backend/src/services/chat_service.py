@@ -1,6 +1,5 @@
 import logging
 from src.services.conversation import update_chat_conversation, get_conversation_messages
-from src.services.llm import chat_complete
 from src.services.routing_service import bot_route_answer_message
 from src.utils.utils import setup_logging
 setup_logging()

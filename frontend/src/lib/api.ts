@@ -7,5 +7,4 @@
  */
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ??
-  process.env.NEXT_PUBLIC_BACKEND_URL ??
-  "https://chatbot-hr-7nnq.onrender.com";
+  "/api";

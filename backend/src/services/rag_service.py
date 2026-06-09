@@ -76,8 +76,7 @@ def bot_rag_answer_message(standalone_question):
     3. Text chunks for normal PDFs; full-page images for scanned PDFs
     4. Improved prompting for Vietnamese legal context
     """
-    document_paths = filter_documents(standalone_question)
-    logger.info(f"Document paths: {document_paths}")
+    document_paths = filter_documents(standalone_question, 10)
     hypo_answers = rewrite_query_hypo_answers(standalone_question)
     retrieved = search_documents(document_paths, hypo_answers, limit=3)
     text_context = retrieved.get("text_context", "")

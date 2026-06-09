@@ -1,9 +1,0 @@
-node_modules/
-.next/
-frontend/node_modules/
-frontend/.next/
-backend/venv/
-backend/.venv/
-venv/
-.venv/
-database/
