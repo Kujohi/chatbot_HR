@@ -363,7 +363,7 @@ export default function ChatUI() {
     if (!confirm("Are you sure you want to delete this conversation?")) return;
     
     try {
-      const response = await fetch(`http://localhost:8000/chat/conversation/${id}`, {
+      const response = await fetch(`${API_BASE}/chat/conversation/${id}`, {
         method: "DELETE",
       });
       
@@ -422,7 +422,7 @@ export default function ChatUI() {
       const fetchId = ++messagesFetchIdRef.current;
       setIsLoadingMessages(true);
       try {
-        const response = await fetch(`http://localhost:8000/chat/conversation/${threadId}`);
+        const response = await fetch(`${API_BASE}/chat/conversation/${threadId}`);
         if (response.ok) {
           const data = await response.json();
           if (
@@ -528,7 +528,7 @@ export default function ChatUI() {
     }
 
     try {
-      const response = await fetch("http://localhost:8000/chat/complete", {
+      const response = await fetch(`${API_BASE}/chat/complete`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
