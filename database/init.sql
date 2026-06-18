@@ -64,19 +64,20 @@ CREATE TABLE document_folders (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO document_folders (name, slug, path, description, created_by)
-VALUES ('General', 'general', 'general', 'Default folder for documents', 'system');
+-- Folders are auto-created by SharePoint sync, no default insert needed.
 
 CREATE TABLE documents (
     id SERIAL PRIMARY KEY,
     title VARCHAR(2000) NOT NULL DEFAULT '',
     source_type VARCHAR(50) NOT NULL DEFAULT '',
-    file_url VARCHAR(500) NOT NULL DEFAULT '',
+    file_url TEXT NOT NULL DEFAULT '',
     storage_path VARCHAR(500),
     folder_id INT NOT NULL REFERENCES document_folders(id) ON DELETE RESTRICT,
     owner_id VARCHAR(50) NOT NULL DEFAULT '',
     status VARCHAR(50) NOT NULL DEFAULT '',
     is_image_pdf BOOLEAN NOT NULL DEFAULT FALSE,
+    sharepoint_item_id VARCHAR(255),
+    sharepoint_modified_at TIMESTAMPTZ,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

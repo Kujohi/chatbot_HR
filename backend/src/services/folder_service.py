@@ -8,42 +8,11 @@ from src.utils.utils import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Supabase Storage object keys must be ASCII-safe (no Vietnamese diacritics, etc.)
-_VIET_ASCII = str.maketrans(
-    {
-        "đ": "d",
-        "Đ": "D",
-        "ă": "a",
-        "Ă": "A",
-        "â": "a",
-        "Â": "A",
-        "ê": "e",
-        "Ê": "E",
-        "ô": "o",
-        "Ô": "O",
-        "ơ": "o",
-        "Ơ": "O",
-        "ư": "u",
-        "Ư": "U",
-    }
-)
-
-
-def to_ascii_storage_key(text: str) -> str:
-    text = text.translate(_VIET_ASCII)
-    text = unicodedata.normalize("NFKD", text)
-    return text.encode("ascii", "ignore").decode("ascii")
-
-
-def sanitize_storage_segment(segment: str) -> str:
-    segment = to_ascii_storage_key(segment.strip())
-    segment = re.sub(r"[^\w.\-]", "_", segment)
-    segment = re.sub(r"_+", "_", segment).strip("_")
-    return segment or "item"
-
 
 def slugify(name: str) -> str:
-    slug = to_ascii_storage_key(name.lower().strip())
+    slug = name.lower().strip()
+    slug = unicodedata.normalize("NFKD", slug)
+    slug = slug.encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^\w\s-]", "", slug)
     slug = re.sub(r"[-\s]+", "-", slug).strip("-")
     return slug or "folder"
@@ -60,32 +29,6 @@ def get_folder(folder_id: int) -> dict | None:
     if not response.data:
         return None
     return response.data[0]
-
-
-def _unique_path(base_path: str) -> str:
-    supabase = get_supabase()
-    path = base_path
-    suffix = 2
-    while True:
-        existing = (
-            supabase.table("document_folders")
-            .select("id")
-            .eq("path", path)
-            .execute()
-        )
-        if not existing.data:
-            return path
-        path = f"{base_path}-{suffix}"
-        suffix += 1
-
-
-def _build_folder_path(parent_id: int | None, slug: str) -> str:
-    if parent_id is None:
-        return slug
-    parent = get_folder(parent_id)
-    if not parent:
-        raise ValueError("Parent folder not found")
-    return f"{parent['path']}/{slug}"
 
 
 def get_folder_breadcrumb(folder_id: int):
@@ -142,100 +85,88 @@ def list_folders(parent_id: int | None = None):
         return {"status": "error", "message": str(e)}
 
 
-def create_folder(name: str, parent_id: int | None = None, description: str = "", created_by: str = ""):
-    try:
-        name = name.strip()
-        if not name:
-            return {"status": "error", "message": "Folder name is required"}
+# ---------------------------------------------------------------------------
+# Sync helpers — used by sharepoint_sync_service
+# ---------------------------------------------------------------------------
 
-        if parent_id is not None and not get_folder(parent_id):
-            return {"status": "error", "message": "Parent folder not found"}
+def get_or_create_folder_for_path(path_segments: list[str]) -> int:
+    """
+    Walk the path segments top-down, creating document_folders rows as needed.
+    Returns the leaf folder ID.
 
-        slug = slugify(name)
-        path = _unique_path(_build_folder_path(parent_id, slug))
-        slug = path.split("/")[-1]
+    Example: ["HR", "Policies"] creates:
+      - HR        (parent_id=None, path="hr")
+      - Policies  (parent_id=<HR id>, path="hr/policies")
+    """
+    supabase = get_supabase()
+    parent_id: int | None = None
+    current_path = ""
 
-        supabase = get_supabase()
+    for segment in path_segments:
+        slug = slugify(segment)
+        current_path = f"{current_path}/{slug}" if current_path else slug
+
+        existing = (
+            supabase.table("document_folders")
+            .select("id")
+            .eq("path", current_path)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            parent_id = existing.data[0]["id"]
+            continue
+
         response = (
             supabase.table("document_folders")
             .insert(
                 {
-                    "name": name,
+                    "name": segment.strip(),
                     "slug": slug,
-                    "path": path,
+                    "path": current_path,
                     "parent_id": parent_id,
-                    "description": description.strip(),
-                    "created_by": created_by,
+                    "description": "",
+                    "created_by": "sharepoint_sync",
                 }
             )
             .execute()
         )
         if not response.data:
-            return {"status": "error", "message": "Failed to create folder"}
+            raise Exception(f"Failed to create folder at path {current_path}")
+        parent_id = response.data[0]["id"]
+        logger.info(f"Created folder '{segment}' at path {current_path} (id={parent_id})")
 
-        folder = response.data[0]
-        folder["subfolder_count"] = 0
-        folder["document_count"] = 0
-        logger.info(f"Created folder {folder['id']} at path {path}")
-        return {"status": "success", "data": folder}
-    except Exception as e:
-        logger.error(f"Error creating folder: {e}")
-        return {"status": "error", "message": str(e)}
+    if parent_id is None:
+        raise Exception("Cannot create folder for empty path segments")
+    return parent_id
 
 
-def delete_folder(folder_id: int):
-    try:
-        folder = get_folder(folder_id)
-        if not folder:
-            return {"status": "error", "message": "Folder not found"}
+def delete_empty_folders() -> int:
+    """
+    Remove folders that have no documents and no sub-folders.
+    Repeats until no more empty folders are found (handles nested empties).
+    Returns total count of deleted folders.
+    """
+    supabase = get_supabase()
+    total_deleted = 0
 
-        if folder.get("slug") == "general" and folder.get("parent_id") is None:
-            return {"status": "error", "message": "Cannot delete the default General folder"}
+    while True:
+        all_folders = supabase.table("document_folders").select("id, parent_id").execute()
+        docs = supabase.table("documents").select("folder_id").execute()
 
-        supabase = get_supabase()
+        folder_ids = {f["id"] for f in (all_folders.data or [])}
+        parent_ids = {f["parent_id"] for f in (all_folders.data or []) if f.get("parent_id")}
+        doc_folder_ids = {d["folder_id"] for d in (docs.data or []) if d.get("folder_id")}
 
-        subfolders = (
-            supabase.table("document_folders")
-            .select("id")
-            .eq("parent_id", folder_id)
-            .execute()
-        )
-        if subfolders.data:
-            return {
-                "status": "error",
-                "message": "Folder is not empty. Delete or move subfolders first.",
-            }
+        # A folder is empty if it has no sub-folders and no documents
+        empty_ids = folder_ids - parent_ids - doc_folder_ids
+        if not empty_ids:
+            break
 
-        docs = (
-            supabase.table("documents")
-            .select("id")
-            .eq("folder_id", folder_id)
-            .execute()
-        )
-        if docs.data:
-            return {
-                "status": "error",
-                "message": "Folder is not empty. Delete documents first.",
-            }
+        for fid in empty_ids:
+            supabase.table("document_folders").delete().eq("id", fid).execute()
+            logger.info(f"Deleted empty folder id={fid}")
 
-        supabase.table("document_folders").delete().eq("id", folder_id).execute()
-        logger.info(f"Deleted folder {folder_id}")
-        return {"status": "success", "message": "Folder deleted successfully"}
-    except Exception as e:
-        logger.error(f"Error deleting folder: {e}")
-        return {"status": "error", "message": str(e)}
+        total_deleted += len(empty_ids)
 
-
-def build_storage_path(folder_path: str, file_name: str) -> str:
-    base = file_name.split("/")[-1] if file_name else "document.pdf"
-    stem, _, ext = base.rpartition(".")
-    if ext:
-        safe_name = f"{sanitize_storage_segment(stem or 'document')}.{sanitize_storage_segment(ext)}"
-    else:
-        safe_name = sanitize_storage_segment(base) or "document.pdf"
-
-    safe_folder = "/".join(
-        sanitize_storage_segment(part) for part in folder_path.split("/") if part
-    )
-    return f"{safe_folder}/{safe_name}"
-
+    return total_deleted

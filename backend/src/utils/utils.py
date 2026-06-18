@@ -80,6 +80,16 @@ def setup_logging():
                     "handlers": ["console"],
                     "level": "INFO",
                 },
+                "httpx": {
+                    "handlers": ["console"],
+                    "level": "WARNING",
+                    "propagate": False,
+                },
+                "httpcore": {
+                    "handlers": ["console"],
+                    "level": "WARNING",
+                    "propagate": False,
+                },
             },
         }
     )

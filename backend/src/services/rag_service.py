@@ -112,3 +112,6 @@ def bot_rag_answer_message(standalone_question):
 
     logger.info("Bot RAG reply generated successfully")
     return assistant_answer
+
+if __name__ == "__main__":
+    print(bot_rag_answer_message("điều kiện dành cho nhân viên nấu bún chả là gì?"))

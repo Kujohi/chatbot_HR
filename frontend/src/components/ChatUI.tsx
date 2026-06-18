@@ -18,13 +18,12 @@ import {
   Sparkles,
   CheckCircle2,
   FileText,
-  Upload,
   X,
   LogOut,
   Folder,
-  FolderPlus,
   ChevronRight,
   Home,
+  CloudDownload,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { usePathname } from "next/navigation";
@@ -131,22 +130,16 @@ export default function ChatUI() {
 
   threadIdRef.current = threadId;
   
-  // Document Upload State
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState("");
-  const [uploadStatus, setUploadStatus] = useState<{type: "success" | "error" | null, message: string}>({type: null, message: ""});
-  
   // Document browser (Google Drive-style)
   const [documents, setDocuments] = useState<any[]>([]);
   const [browseFolders, setBrowseFolders] = useState<DocumentFolder[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>([]);
   const [isLoadingBrowse, setIsLoadingBrowse] = useState(false);
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  
+  // Sync State
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{type: "success" | "error" | null, message: string}>({type: null, message: ""});
   // Chunk Modal State
   const [selectedChunk, setSelectedChunk] = useState<any>(null);
   const [isChunkModalOpen, setIsChunkModalOpen] = useState(false);
@@ -222,81 +215,35 @@ export default function ChatUI() {
     setCurrentFolderId(folderId);
   };
 
-  const handleCreateFolder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const name = newFolderName.trim();
-    if (!name) return;
-
-    setIsCreatingFolder(true);
-    try {
-      const response = await fetch(`${API_BASE}/folders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          parent_id: currentFolderId,
-          created_by: userProfile?.name || user?.email || "admin",
-        }),
-      });
-      const data = await response.json();
-      if (data.status !== "success") {
-        throw new Error(data.message || "Failed to create folder");
-      }
-      setNewFolderName("");
-      setIsNewFolderModalOpen(false);
-      loadCurrentDirectory();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create folder";
-      alert(message);
-    } finally {
-      setIsCreatingFolder(false);
-    }
-  };
-
-  const handleDeleteFolder = async (folder: DocumentFolder, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (folder.slug === "general" && folder.parent_id == null) {
-      alert("The General folder cannot be deleted.");
-      return;
-    }
-    if (!confirm(`Delete folder "${folder.name}"? It must be empty.`)) return;
-
-    try {
-      const response = await fetch(`${API_BASE}/folders/${folder.id}`, { method: "DELETE" });
-      const data = await response.json();
-      if (data.status !== "success") {
-        alert(data.message || "Failed to delete folder");
-        return;
-      }
-      loadCurrentDirectory();
-    } catch (error) {
-      console.error("Error deleting folder:", error);
-      alert("Failed to delete folder");
-    }
-  };
-
   useEffect(() => {
     if (activeTab === "documents") {
       loadCurrentDirectory();
     }
   }, [activeTab, currentFolderId]);
 
-  const handleDeleteDocument = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this document?")) return;
-    
+  const handleSync = async () => {
+    setIsSyncing(true);
+    setSyncStatus({ type: null, message: "" });
     try {
-      const response = await fetch(`${API_BASE}/document/${id}`, {
-        method: "DELETE",
-      });
-      
-      if (response.ok) {
+      const response = await fetch(`${API_BASE}/sync`, { method: "POST" });
+      const data = await response.json();
+      if (data.status === "success") {
+        const d = data.data;
+        const parts: string[] = [];
+        if (d.new > 0) parts.push(`${d.new} new`);
+        if (d.updated > 0) parts.push(`${d.updated} updated`);
+        if (d.deleted > 0) parts.push(`${d.deleted} deleted`);
+        if (d.skipped > 0) parts.push(`${d.skipped} unchanged`);
+        if (d.stopped_by_rate_limit) parts.push("⚠ stopped by rate limit");
+        setSyncStatus({ type: "success", message: `Sync complete: ${parts.join(", ") || "no changes"}` });
         loadCurrentDirectory();
       } else {
-        alert("Failed to delete document");
+        setSyncStatus({ type: "error", message: data.message || "Sync failed" });
       }
     } catch (error) {
-      console.error("Error deleting document:", error);
-      alert("Error deleting document");
+      setSyncStatus({ type: "error", message: "Failed to sync. Is the backend running?" });
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -587,81 +534,7 @@ export default function ChatUI() {
     }
   };
 
-  const handleFileUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (uploadFiles.length === 0 || currentFolderId == null) return;
 
-    setIsUploading(true);
-    setUploadStatus({ type: null, message: "" });
-    setUploadProgress(`Uploading 0/${uploadFiles.length}…`);
-
-    try {
-      if (uploadFiles.length === 1) {
-        const formData = new FormData();
-        formData.append("file", uploadFiles[0]);
-        formData.append("owner_id", "default_user");
-        formData.append("folder_id", String(currentFolderId));
-        formData.append("source_type", "pdf");
-
-        setUploadProgress(`Uploading 1/1: ${uploadFiles[0].name}`);
-        const response = await fetch(`${API_BASE}/document/create`, {
-          method: "POST",
-          body: formData,
-        });
-        const data = await response.json();
-        if (!response.ok || data.status !== "success") {
-          throw new Error(data.message || "Upload failed");
-        }
-        const replacedNote = data.replaced ? " (replaced existing file)" : "";
-        setUploadStatus({
-          type: "success",
-          message: `Uploaded 1 document successfully${replacedNote}.`,
-        });
-      } else {
-        const formData = new FormData();
-        uploadFiles.forEach((file) => formData.append("files", file));
-        formData.append("owner_id", "default_user");
-        formData.append("folder_id", String(currentFolderId));
-        formData.append("source_type", "pdf");
-
-        setUploadProgress(`Uploading ${uploadFiles.length} file(s)…`);
-        const response = await fetch(`${API_BASE}/document/create-batch`, {
-          method: "POST",
-          body: formData,
-        });
-        const data = await response.json();
-        if (!response.ok || data.status !== "success") {
-          const completed = data.completed_count ?? 0;
-          const failedFile = data.failed_file ? ` Failed on: ${data.failed_file}.` : "";
-          const partial =
-            completed > 0
-              ? ` ${completed} file(s) uploaded before the error.${failedFile}`
-              : failedFile;
-          throw new Error((data.message || "Batch upload failed") + partial);
-        }
-        const replacedCount = (data.data || []).filter((d: { replaced?: boolean }) => d.replaced).length;
-        const replacedNote =
-          replacedCount > 0 ? ` (${replacedCount} replaced existing file(s))` : "";
-        setUploadStatus({
-          type: "success",
-          message: `Uploaded ${data.completed_count} document(s) successfully${replacedNote}.`,
-        });
-      }
-
-      setUploadFiles([]);
-      setUploadProgress("");
-      setIsUploadModalOpen(false);
-      loadCurrentDirectory();
-    } catch (error) {
-      console.error("Upload error:", error);
-      const message =
-        error instanceof Error ? error.message : "Failed to upload documents. Is the backend running?";
-      setUploadStatus({ type: "error", message });
-    } finally {
-      setIsUploading(false);
-      setUploadProgress("");
-    }
-  };
 
   if (isAuthLoading) {
     return (
@@ -760,7 +633,7 @@ export default function ChatUI() {
               <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Document Management</h2>
             </div>
             <p className="text-xs text-gray-500 px-2 leading-relaxed">
-              Upload your documents here so the AI can use them as context for your questions.
+              Documents are synced automatically from SharePoint every 5 minutes.
             </p>
           </div>
         )}
@@ -806,31 +679,24 @@ export default function ChatUI() {
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">Documents</h2>
                   <p className="text-gray-500 text-sm mt-1">
-                    {userProfile?.role === "admin" ? "Browse folders and upload PDFs" : "Browse folders and view PDFs"}
+                    Browse folders and documents synced from SharePoint
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {userProfile?.role === "admin" && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setIsNewFolderModalOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
-                      >
-                        <FolderPlus size={18} />
-                        New folder
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsUploadModalOpen(true)}
-                        disabled={currentFolderId == null}
-                        title={currentFolderId == null ? "Open a folder to upload" : "Upload PDF"}
-                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5b61f4] text-white text-sm font-medium hover:bg-[#4b51e4] disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-md shadow-blue-500/20"
-                      >
-                        <Upload size={18} />
-                        Upload
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      onClick={handleSync}
+                      disabled={isSyncing}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5b61f4] text-white text-sm font-medium hover:bg-[#4b51e4] disabled:bg-gray-400 transition-colors shadow-md shadow-blue-500/20"
+                    >
+                      {isSyncing ? (
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <CloudDownload size={18} />
+                      )}
+                      {isSyncing ? "Syncing…" : "Sync from SharePoint"}
+                    </button>
                   )}
                   <button
                     type="button"
@@ -841,6 +707,11 @@ export default function ChatUI() {
                     <RefreshCw size={18} className={isLoadingBrowse ? "animate-spin" : ""} />
                   </button>
                 </div>
+                {syncStatus.message && (
+                  <p className={`w-full text-sm ${syncStatus.type === "error" ? "text-red-600" : "text-green-600"}`}>
+                    {syncStatus.message}
+                  </p>
+                )}
               </div>
 
               <nav className="flex items-center gap-1 flex-wrap text-sm mb-6 px-1">
@@ -881,11 +752,7 @@ export default function ChatUI() {
                   <Folder size={40} className="mx-auto text-gray-300 mb-3" />
                   <p className="text-gray-600 font-medium">This folder is empty</p>
                   <p className="text-gray-400 text-sm mt-1">
-                    {userProfile?.role === "admin"
-                      ? (currentFolderId == null
-                        ? "Create a folder or open one to upload files."
-                        : "Use Upload to add a PDF here.")
-                      : "No documents inside this folder."}
+                    Documents are synced from SharePoint automatically.
                   </p>
                 </div>
               ) : (
@@ -909,16 +776,6 @@ export default function ChatUI() {
                         <p className="text-xs text-gray-400">{getFolderMeta(folder)}</p>
                       </div>
                       <span className="text-xs text-gray-400 hidden sm:inline">Folder</span>
-                      {userProfile?.role === "admin" && !(folder.slug === "general" && folder.parent_id == null) && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleDeleteFolder(folder, e)}
-                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Delete folder"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
                     </div>
                   ))}
                   {documents.map((doc) => (
@@ -934,12 +791,12 @@ export default function ChatUI() {
                           {doc.title}
                         </p>
                         <p className="text-xs text-gray-400">
-                          PDF · {new Date(doc.created_at).toLocaleDateString()}
+                          {(doc.source_type || "pdf").toUpperCase()} · {new Date(doc.created_at).toLocaleDateString()}
                         </p>
                       </div>
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <a
-                          href={doc.file_url}
+                          href={`${API_BASE}/documents/${doc.id}/view`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="p-2 text-gray-400 hover:text-[#5b61f4] hover:bg-blue-50 rounded-lg"
@@ -947,16 +804,6 @@ export default function ChatUI() {
                         >
                           <Search size={16} />
                         </a>
-                        {userProfile?.role === "admin" && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteDocument(doc.id)}
-                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
-                            title="Delete"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
                       </div>
                     </div>
                   ))}
@@ -964,151 +811,7 @@ export default function ChatUI() {
               )}
             </div>
 
-            {isNewFolderModalOpen && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-                onClick={() => setIsNewFolderModalOpen(false)}
-              >
-                <div
-                  className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">New folder</h3>
-                    <button
-                      type="button"
-                      onClick={() => setIsNewFolderModalOpen(false)}
-                      className="p-1 text-gray-400 hover:text-gray-600 rounded-lg"
-                    >
-                      <X size={20} />
-                    </button>
-                  </div>
-                  <form onSubmit={handleCreateFolder} className="space-y-4">
-                    <input
-                      type="text"
-                      value={newFolderName}
-                      onChange={(e) => setNewFolderName(e.target.value)}
-                      placeholder="Folder name"
-                      autoFocus
-                      className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#5b61f4]/20 focus:border-[#5b61f4]"
-                    />
-                    <p className="text-xs text-gray-400">
-                      Created inside:{" "}
-                      {currentFolderId == null
-                        ? "My Drive (root)"
-                        : breadcrumb[breadcrumb.length - 1]?.name ?? "current folder"}
-                    </p>
-                    <div className="flex gap-2 justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setIsNewFolderModalOpen(false)}
-                        className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={!newFolderName.trim() || isCreatingFolder}
-                        className="px-4 py-2.5 rounded-xl bg-[#5b61f4] text-white text-sm font-medium hover:bg-[#4b51e4] disabled:bg-gray-300"
-                      >
-                        {isCreatingFolder ? "Creating…" : "Create"}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </div>
-            )}
 
-            {isUploadModalOpen && currentFolderId != null && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-                onClick={() => !isUploading && setIsUploadModalOpen(false)}
-              >
-                <div
-                  className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">Upload documents</h3>
-                    <button
-                      type="button"
-                      onClick={() => !isUploading && setIsUploadModalOpen(false)}
-                      className="p-1 text-gray-400 hover:text-gray-600 rounded-lg"
-                    >
-                      <X size={20} />
-                    </button>
-                  </div>
-                  <p className="text-xs text-gray-500 mb-4">
-                    Uploading to:{" "}
-                    <span className="font-medium text-gray-700">
-                      {breadcrumb[breadcrumb.length - 1]?.name ?? "folder"}
-                    </span>
-                  </p>
-                  <form onSubmit={handleFileUpload} className="space-y-4">
-                    <div className="relative border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 transition-colors cursor-pointer">
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        multiple
-                        onChange={(e) => setUploadFiles(Array.from(e.target.files || []))}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                        required={uploadFiles.length === 0}
-                      />
-                      <Upload size={28} className="mx-auto text-gray-400 mb-2" />
-                      <p className="text-sm font-medium text-gray-700">
-                        {uploadFiles.length === 0
-                          ? "Choose one or more PDFs"
-                          : `${uploadFiles.length} file(s) selected`}
-                      </p>
-                    </div>
-                    {uploadFiles.length > 0 && (
-                      <ul className="max-h-32 overflow-y-auto text-xs text-gray-600 space-y-1 px-1">
-                        {uploadFiles.map((file) => (
-                          <li key={`${file.name}-${file.size}`} className="truncate">
-                            {file.name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <p className="text-xs text-gray-400">
-                      Batch upload stops on the first error. Files with the same name replace the existing document.
-                    </p>
-                    {uploadProgress && (
-                      <p className="text-sm text-[#5b61f4] font-medium">{uploadProgress}</p>
-                    )}
-                    {uploadStatus.message && (
-                      <p
-                        className={`text-sm ${
-                          uploadStatus.type === "error" ? "text-red-600" : "text-green-600"
-                        }`}
-                      >
-                        {uploadStatus.message}
-                      </p>
-                    )}
-                    <div className="flex gap-2 justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setIsUploadModalOpen(false)}
-                        disabled={isUploading}
-                        className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={uploadFiles.length === 0 || isUploading}
-                        className="px-4 py-2.5 rounded-xl bg-[#5b61f4] text-white text-sm font-medium hover:bg-[#4b51e4] disabled:bg-gray-300 flex items-center gap-2"
-                      >
-                        {isUploading && (
-                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        )}
-                        {isUploading ? "Uploading…" : uploadFiles.length > 1 ? `Upload ${uploadFiles.length} files` : "Upload"}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </div>
-            )}
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto p-8 md:p-12 pb-32">
@@ -1286,9 +989,9 @@ export default function ChatUI() {
                       {selectedChunk.content}
                     </p>
                   </div>
-                  {selectedChunk.metadata?.file_url && (
+                  {(selectedChunk.metadata?.document_id || selectedChunk.metadata?.file_url) && (
                     <a
-                      href={selectedChunk.metadata.file_url}
+                      href={selectedChunk.metadata.document_id ? `${API_BASE}/documents/${selectedChunk.metadata.document_id}/view` : selectedChunk.metadata.file_url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 text-sm font-medium text-[#5b61f4] hover:underline"

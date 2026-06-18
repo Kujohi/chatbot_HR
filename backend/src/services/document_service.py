@@ -1,6 +1,5 @@
 from src.db.client import get_supabase
 import logging
-import urllib.parse
 import uuid
 from src.utils.utils import setup_logging
 from src.services.document_processing_service import (
@@ -11,33 +10,15 @@ from src.services.document_processing_service import (
     pinecone_index_document_summary,
     document_summary_vector_id,
 )
-from src.services.folder_service import get_folder, build_storage_path
+from src.services.folder_service import get_folder
 from src.services.rewriter import rewrite_path_to_summary
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
-BUCKET_NAME = "documents"
-
-
-def _storage_path_from_url(file_url: str) -> str | None:
-    url_parts = file_url.split(f"/public/{BUCKET_NAME}/")
-    if len(url_parts) > 1:
-        return urllib.parse.unquote(url_parts[1])
-    return None
-
-
-def _remove_storage_file(file_url: str | None = None, storage_path: str | None = None) -> None:
-    file_path = storage_path or (file_url and _storage_path_from_url(file_url))
-    if not file_path:
-        return
-    supabase = get_supabase()
-    logger.info(f"Deleting file from storage: {file_path}")
-    supabase.storage.from_(BUCKET_NAME).remove([file_path])
-
 
 def _cleanup_document_index(document_id: str) -> None:
-    """Remove Pinecone vectors and chunk rows; keep the documents row and storage file."""
+    """Remove Pinecone vectors and chunk rows; keep the documents row."""
     supabase = get_supabase()
     chunk_response = (
         supabase.table("document_chunks")
@@ -78,17 +59,14 @@ def _find_document_in_folder(folder_id: int, storage_path: str) -> dict | None:
 
 def rollback_document(document_id: str) -> None:
     """
-    Remove Supabase storage, document_chunks rows, and documents row after indexing fails.
-    Best-effort Pinecone cleanup if any vectors were partially written.
+    Remove document_chunks rows, Pinecone vectors, and the documents row.
+    Used when indexing fails and we need to undo the DB insert.
     """
     supabase = get_supabase()
     doc_response = supabase.table("documents").select("*").eq("id", document_id).execute()
     if not doc_response.data:
         logger.warning(f"Rollback skipped: document {document_id} not found")
         return
-
-    document = doc_response.data[0]
-    file_url = document.get("file_url")
 
     chunk_response = (
         supabase.table("document_chunks")
@@ -110,14 +88,6 @@ def rollback_document(document_id: str) -> None:
             logger.warning(f"Rollback: failed to delete Pinecone chunks: {pinecone_e}")
 
     supabase.table("document_chunks").delete().eq("document_id", document_id).execute()
-
-    storage_path = document.get("storage_path")
-    if file_url or storage_path:
-        try:
-            _remove_storage_file(file_url, storage_path)
-        except Exception as storage_e:
-            logger.warning(f"Rollback: failed to delete storage file: {storage_e}")
-
     supabase.table("documents").delete().eq("id", document_id).execute()
     logger.info(f"Rolled back document {document_id} from Supabase")
 
@@ -144,7 +114,7 @@ def get_documents_by_storage_paths(storage_paths: list[str]) -> list[dict]:
     supabase = get_supabase()
     response = (
         supabase.table("documents")
-        .select("id, title, file_url, storage_path, is_image_pdf")
+        .select("id, title, file_url, storage_path, is_image_pdf, sharepoint_item_id")
         .in_("storage_path", storage_paths)
         .execute()
     )
@@ -168,189 +138,18 @@ def get_scanned_storage_paths(storage_paths: list[str]) -> list[str]:
     return scanned_paths
 
 
-def insert_docs(file_content, file_name, title, owner_id, folder_id: int, source_type="pdf"):
-    """
-    Upload a document to Supabase storage and upsert metadata.
-    Replaces an existing document in the same folder when the file name matches.
-    """
-    try:
-        logger.info(f"Inserting document: {title} for owner: {owner_id} in folder {folder_id}")
-        folder = get_folder(folder_id)
-        if not folder:
-            return {"status": "error", "message": "Folder not found"}
-
-        supabase = get_supabase()
-        file_path = build_storage_path(folder["path"], file_name)
-        upload_options = {"upsert": "true"}
-        if source_type == "pdf":
-            upload_options["content-type"] = "application/pdf"
-
-        supabase.storage.from_(BUCKET_NAME).upload(
-            path=file_path,
-            file=file_content,
-            file_options=upload_options,
-        )
-
-        file_url = supabase.storage.from_(BUCKET_NAME).get_public_url(file_path)
-        existing = _find_document_in_folder(folder_id, file_path)
-        replaced = existing is not None
-
-        if replaced:
-            document_id = existing["id"]
-            logger.info(f"Replacing existing document {document_id} at {file_path}")
-            _cleanup_document_index(document_id)
-            update_data = {
-                "title": title,
-                "source_type": source_type,
-                "file_url": file_url,
-                "storage_path": file_path,
-                "owner_id": owner_id,
-                "status": "uploaded",
-                "is_image_pdf": False,
-            }
-            db_response = (
-                supabase.table("documents")
-                .update(update_data)
-                .eq("id", document_id)
-                .execute()
-            )
-            if not db_response.data:
-                raise Exception(f"Failed to update document metadata: {db_response}")
-        else:
-            document_data = {
-                "title": title,
-                "source_type": source_type,
-                "file_url": file_url,
-                "storage_path": file_path,
-                "folder_id": folder_id,
-                "owner_id": owner_id,
-                "status": "uploaded",
-            }
-            logger.info(f"Inserting metadata into documents table: {document_data}")
-            db_response = supabase.table("documents").insert(document_data).execute()
-            if not db_response.data:
-                raise Exception(f"Failed to insert document metadata: {db_response}")
-            document_id = db_response.data[0]["id"]
-            logger.info(f"Document inserted successfully with ID: {document_id}")
-
-        return {
-            "status": "success",
-            "document_id": document_id,
-            "file_url": file_url,
-            "storage_path": file_path,
-            "replaced": replaced,
-            "file_name": file_name,
-        }
-
-    except Exception as e:
-        logger.error(f"Error in insert_docs: {str(e)}")
-        return {
-            "status": "error",
-            "message": str(e),
-        }
-
-
-def create_and_index_document(
-    file_content: bytes,
-    file_name: str,
-    title: str,
-    owner_id: str,
-    folder_id: int,
-    source_type: str = "pdf",
-) -> dict:
-    """Upload (or replace) one document and index it. Returns error dict on failure."""
-    create_status = insert_docs(
-        file_content=file_content,
-        file_name=file_name,
-        title=title,
-        owner_id=owner_id,
-        folder_id=folder_id,
-        source_type=source_type,
-    )
-    if create_status.get("status") != "success":
-        return create_status
-
-    document_id = create_status["document_id"]
-    replaced = create_status.get("replaced", False)
-    try:
-        index_docs(document_id)
-    except Exception as index_error:
-        logger.error(f"Indexing failed for document {document_id}: {index_error}")
-        try:
-            if replaced:
-                _cleanup_document_index(document_id)
-                get_supabase().table("documents").update(
-                    {"status": "index_failed"}
-                ).eq("id", document_id).execute()
-            else:
-                rollback_document(document_id)
-        except Exception as cleanup_error:
-            logger.error(f"Cleanup failed for document {document_id}: {cleanup_error}")
-        return {
-            "status": "error",
-            "message": f"Failed to create vector embeddings: {index_error}",
-            "file_name": file_name,
-        }
-
-    return create_status
-
-
-def insert_docs_batch(
-    files: list[tuple[bytes, str, str]],
-    owner_id: str,
-    folder_id: int,
-    source_type: str = "pdf",
-) -> dict:
-    """
-    Upload and index multiple documents sequentially.
-    Stops on the first failure; earlier files remain uploaded/indexed.
-    """
-    uploaded: list[dict] = []
-    for file_content, file_name, title in files:
-        result = create_and_index_document(
-            file_content=file_content,
-            file_name=file_name,
-            title=title,
-            owner_id=owner_id,
-            folder_id=folder_id,
-            source_type=source_type,
-        )
-        if result.get("status") != "success":
-            return {
-                "status": "error",
-                "message": result.get("message", "Upload failed"),
-                "failed_file": file_name,
-                "uploaded": uploaded,
-                "completed_count": len(uploaded),
-                "total_count": len(files),
-            }
-        uploaded.append(
-            {
-                "document_id": result["document_id"],
-                "file_name": file_name,
-                "storage_path": result.get("storage_path"),
-                "replaced": result.get("replaced", False),
-            }
-        )
-
-    return {
-        "status": "success",
-        "data": uploaded,
-        "completed_count": len(uploaded),
-        "total_count": len(files),
-    }
-
 def index_docs(document_id: str) -> None:
     """
     Indexes a document into Pinecone.
     Text PDFs: summary vector + content chunks.
     Scanned/image PDFs: summary vector only (no chunking).
-    Raises on failure so callers can roll back the Supabase upload.
+    Word docs: summary vector + content chunks (never scanned).
+    Raises on failure so callers can roll back.
     """
     supabase = get_supabase()
     response = (
         supabase.table("documents")
-        .select("storage_path, title, file_url")
+        .select("storage_path, title, file_url, source_type")
         .eq("id", document_id)
         .execute()
     )
@@ -360,13 +159,18 @@ def index_docs(document_id: str) -> None:
     doc_data = response.data[0]
     storage_path = doc_data.get("storage_path")
     file_url = doc_data.get("file_url")
+    source_type = doc_data.get("source_type", "pdf")
     if not storage_path:
         raise Exception(f"Document {document_id} has no storage_path")
     if not file_url:
         raise Exception(f"Document {document_id} has no file_url")
 
-    from src.services.image_document_service import is_scanned_pdf
-    is_image_pdf = is_scanned_pdf(file_url)
+    # Only PDFs can be scanned; Word docs are always text-based
+    is_image_pdf = False
+    if source_type == "pdf":
+        from src.services.image_document_service import is_scanned_pdf
+        is_image_pdf = is_scanned_pdf(file_url)
+
     supabase.table("documents").update({"is_image_pdf": is_image_pdf}).eq(
         "id", document_id
     ).execute()
@@ -503,6 +307,7 @@ def get_chunk(chunk_id: str):
             "metadata": {
                 "title": doc_meta.get("title") or "Unknown Document",
                 "file_url": doc_meta.get("file_url"),
+                "document_id": chunk_data.get("document_id"),
             },
         }
 
@@ -513,21 +318,18 @@ def get_chunk(chunk_id: str):
 
 def delete_document(document_id: str):
     """
-    Deletes a document from the documents table and Supabase storage.
+    Deletes a document: Pinecone vectors, chunk rows, and the documents row.
+    No storage file cleanup needed — files live in SharePoint.
     """
     try:
         supabase = get_supabase()
-        
-        # 1. Get document metadata to find the file path
+
+        # 1. Get document metadata
         doc_response = supabase.table("documents").select("*").eq("id", document_id).execute()
         chunk_response = supabase.table("document_chunks").select("*").eq("document_id", document_id).execute()
 
         if not doc_response.data:
             return {"status": "error", "message": "Document not found"}
-            
-        document = doc_response.data[0]
-        file_url = document.get("file_url")
-        storage_path = document.get("storage_path")
 
         # 2. Delete from pinecone index (document summary + chunks)
         try:
@@ -542,22 +344,14 @@ def delete_document(document_id: str):
                 pinecone_delete(chunk_ids)
             except Exception as pinecone_e:
                 logger.warning(f"Failed to delete chunks from Pinecone: {str(pinecone_e)}")
-                # Continue with other deletions even if Pinecone fails
 
         # 3. Delete chunk rows from database
         supabase.table("document_chunks").delete().eq("document_id", document_id).execute()
 
-        # 4. Delete from storage
-        if file_url or storage_path:
-            try:
-                _remove_storage_file(file_url, storage_path)
-            except Exception as storage_e:
-                logger.warning(f"Failed to delete file from storage: {str(storage_e)}")
-
-        # 5. Delete from database
+        # 4. Delete document row from database
         logger.info(f"Deleting document metadata for ID: {document_id}")
         supabase.table("documents").delete().eq("id", document_id).execute()
-        
+
         return {
             "status": "success",
             "message": "Document deleted successfully"
@@ -568,3 +362,89 @@ def delete_document(document_id: str):
             "status": "error",
             "message": str(e)
         }
+
+
+# ---------------------------------------------------------------------------
+# Sync helpers — used by sharepoint_sync_service
+# ---------------------------------------------------------------------------
+
+def _timestamps_equal(t1_str: str, t2_str: str) -> bool:
+    """Compare two ISO timestamp strings by parsing them to datetime objects."""
+    if not t1_str or not t2_str:
+        return False
+    from datetime import datetime
+    try:
+        # Standardize Z suffix to +00:00
+        s1 = t1_str.replace("Z", "+00:00")
+        s2 = t2_str.replace("Z", "+00:00")
+        dt1 = datetime.fromisoformat(s1)
+        dt2 = datetime.fromisoformat(s2)
+        return dt1 == dt2
+    except Exception:
+        return t1_str == t2_str
+
+
+def upsert_document_for_sync(
+    title: str,
+    file_url: str,
+    storage_path: str,
+    folder_id: int,
+    source_type: str,
+    sharepoint_item_id: str,
+    sharepoint_modified_at: str,
+) -> dict:
+    """
+    Insert or update a document row for SharePoint sync.
+    Returns {"document_id": ..., "is_new": bool, "needs_reindex": bool}.
+    """
+    supabase = get_supabase()
+
+    # Check if document already exists by sharepoint_item_id
+    existing = (
+        supabase.table("documents")
+        .select("id, sharepoint_modified_at")
+        .eq("sharepoint_item_id", sharepoint_item_id)
+        .limit(1)
+        .execute()
+    )
+
+    if existing.data:
+        doc = existing.data[0]
+        old_modified = doc.get("sharepoint_modified_at") or ""
+        if _timestamps_equal(old_modified, sharepoint_modified_at):
+            # Unchanged — skip completely (no DB update)
+            return {"document_id": str(doc["id"]), "is_new": False, "needs_reindex": False}
+
+        # Modified — update metadata, caller will re-index
+        _cleanup_document_index(str(doc["id"]))
+        supabase.table("documents").update({
+            "title": title,
+            "file_url": file_url,
+            "storage_path": storage_path,
+            "folder_id": folder_id,
+            "source_type": source_type,
+            "sharepoint_modified_at": sharepoint_modified_at,
+            "status": "uploaded",
+            "is_image_pdf": False,
+        }).eq("id", doc["id"]).execute()
+        return {"document_id": str(doc["id"]), "is_new": False, "needs_reindex": True}
+
+    # New document
+    document_data = {
+        "title": title,
+        "source_type": source_type,
+        "file_url": file_url,
+        "storage_path": storage_path,
+        "folder_id": folder_id,
+        "owner_id": "sharepoint_sync",
+        "status": "uploaded",
+        "sharepoint_item_id": sharepoint_item_id,
+        "sharepoint_modified_at": sharepoint_modified_at,
+    }
+    db_response = supabase.table("documents").insert(document_data).execute()
+    if not db_response.data:
+        raise Exception(f"Failed to insert document: {document_data}")
+
+    document_id = str(db_response.data[0]["id"])
+    logger.info(f"Inserted new document {document_id} for sync: {storage_path}")
+    return {"document_id": document_id, "is_new": True, "needs_reindex": True}

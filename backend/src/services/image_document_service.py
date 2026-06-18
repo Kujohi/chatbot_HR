@@ -45,6 +45,19 @@ def load_scanned_document_images(storage_paths: List[str]) -> List[Dict]:
     for doc in image_docs:
         file_url = doc.get("file_url")
         storage_path = doc.get("storage_path")
+        sp_item_id = doc.get("sharepoint_item_id")
+
+        if sp_item_id:
+            from src.services.sharepoint_sync_service import get_sharepoint_download_url
+            try:
+                file_url = get_sharepoint_download_url(sp_item_id)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch fresh SharePoint download URL for "
+                    f"{storage_path} (id={doc.get('id')}): {e}. "
+                    f"Falling back to stored URL."
+                )
+
         if not file_url or not storage_path:
             continue
         references.append(

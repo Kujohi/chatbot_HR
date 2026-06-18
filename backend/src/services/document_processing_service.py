@@ -3,6 +3,8 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import os
 import logging
+import tempfile
+import requests
 from uuid import uuid4
 from pinecone import Pinecone, ServerlessSpec
 from dotenv import load_dotenv
@@ -15,6 +17,51 @@ logger = logging.getLogger(__name__)
 from src.db.client import get_supabase
 
 
+def _load_pdf(file_url: str) -> list[Document]:
+    """Load a PDF from a URL using PyMuPDFLoader."""
+    loader = PyMuPDFLoader(file_url)
+    documents = loader.load()
+    # Fix common Vietnamese PDF extraction errors (e.g. old font encodings)
+    for doc in documents:
+        doc.page_content = doc.page_content.replace('ƣ', 'ư').replace('Ƣ', 'Ư')
+    return documents
+
+
+def _load_docx(file_url: str) -> list[Document]:
+    """Download a .docx from a URL and extract text using python-docx."""
+    from docx import Document as DocxDocument
+
+    response = requests.get(file_url, timeout=60)
+    response.raise_for_status()
+
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        tmp.write(response.content)
+        tmp_path = tmp.name
+
+    try:
+        doc = DocxDocument(tmp_path)
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        full_text = "\n".join(paragraphs)
+
+        # Return as a single langchain Document (no page concept for docx)
+        return [
+            Document(
+                page_content=full_text,
+                metadata={"source": file_url, "page": 1},
+            )
+        ]
+    finally:
+        os.unlink(tmp_path)
+
+
+def _load_document_content(file_url: str, source_type: str) -> list[Document]:
+    """Dispatch to the appropriate loader based on source_type."""
+    if source_type == "docx":
+        return _load_docx(file_url)
+    else:
+        return _load_pdf(file_url)
+
+
 def split_document(document_id: str):
     supabase = get_supabase()
     response = supabase.table("documents").select("*").eq("id", document_id).execute()
@@ -24,20 +71,15 @@ def split_document(document_id: str):
         
     doc_data = response.data[0]
     file_url = doc_data["file_url"]
-    
-    loader = PyMuPDFLoader(file_url)
+    source_type = doc_data.get("source_type", "pdf")
+
+    documents = _load_document_content(file_url, source_type)
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1500,
         chunk_overlap=100,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
-    documents = loader.load()
-    
-    # Fix common Vietnamese PDF extraction errors (e.g. old font encodings)
-    for doc in documents:
-        doc.page_content = doc.page_content.replace('ƣ', 'ư').replace('Ƣ', 'Ư')
-        
     chunks = splitter.split_documents(documents)
     
     # Inject custom metadata into each chunk

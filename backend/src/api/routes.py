@@ -1,23 +1,19 @@
-from fastapi import FastAPI, APIRouter, File, UploadFile, Form, Query
-from typing import List
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
+import os
 import uvicorn
 import logging
 from src.utils.utils import setup_logging
 from src.services.chat_service import llm_handle_message
 from src.services.document_service import (
-    create_and_index_document,
-    insert_docs_batch,
     get_all_documents,
-    delete_document,
     get_chunk,
 )
 from src.services.folder_service import (
     list_folders,
-    create_folder,
-    delete_folder,
     get_folder_breadcrumb,
 )
 
@@ -27,7 +23,47 @@ POLLING_INTERVAL = 0.5
 setup_logging()
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+
+SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL_SECONDS", "10"))
+_sync_lock = asyncio.Lock()
+
+
+async def _sync_loop():
+    """Run SharePoint sync on startup and then every SYNC_INTERVAL seconds."""
+    from src.services.sharepoint_sync_service import run_sync
+
+    while True:
+        try:
+            async with _sync_lock:
+                logger.debug("Starting SharePoint sync cycle...")
+                result = await asyncio.to_thread(run_sync)
+                has_activity = (
+                    result.new_count > 0 or
+                    result.updated_count > 0 or
+                    result.deleted_count > 0 or
+                    result.error_count > 0
+                )
+                if has_activity:
+                    logger.info(f"Sync cycle finished: {result.to_dict()}")
+                else:
+                    logger.debug(f"Sync cycle finished: {result.to_dict()}")
+        except Exception as e:
+            logger.error(f"Sync cycle failed: {e}")
+        await asyncio.sleep(SYNC_INTERVAL)
+
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: starts background sync on startup, cancels on shutdown."""
+    task = asyncio.create_task(_sync_loop())
+    logger.info(f"SharePoint sync background task started (interval={SYNC_INTERVAL}s)")
+    yield
+    task.cancel()
+    logger.info("SharePoint sync background task cancelled")
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(
@@ -46,12 +82,6 @@ class ChatCompleteRequest(BaseModel):
     bot_id: str
     sync_request: bool
 
-
-class CreateFolderRequest(BaseModel):
-    name: str
-    parent_id: int | None = None
-    description: str = ""
-    created_by: str = ""
 
 @router.get("/health")
 async def health():
@@ -78,87 +108,10 @@ async def folder_breadcrumb_endpoint(folder_id: int):
     return await asyncio.to_thread(get_folder_breadcrumb, folder_id)
 
 
-@router.post("/folders")
-async def create_folder_endpoint(request: CreateFolderRequest):
-    logger.info(f"Creating folder: {request.name} under parent {request.parent_id}")
-    return await asyncio.to_thread(
-        create_folder,
-        request.name,
-        request.parent_id,
-        request.description,
-        request.created_by,
-    )
-
-
-@router.delete("/folders/{folder_id}")
-async def delete_folder_endpoint(folder_id: int):
-    logger.info(f"Deleting folder: {folder_id}")
-    return await asyncio.to_thread(delete_folder, folder_id)
-
-
-@router.post("/document/create")
-async def create_document(
-    file: UploadFile = File(...),
-    title: str = Form(""),
-    owner_id: str = Form("default_user"),
-    folder_id: int = Form(...),
-    source_type: str = Form("pdf"),
-):
-    logger.info(f"Creating document: {title} for owner: {owner_id} in folder: {folder_id}")
-    try:
-        file_content = await file.read()
-        return await asyncio.to_thread(
-            create_and_index_document,
-            file_content=file_content,
-            file_name=file.filename or "document.pdf",
-            title=title or file.filename or "document.pdf",
-            owner_id=owner_id,
-            folder_id=folder_id,
-            source_type=source_type,
-        )
-    except Exception as e:
-        logger.error(f"Error creating document: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
-
-@router.post("/document/create-batch")
-async def create_documents_batch(
-    files: List[UploadFile] = File(...),
-    owner_id: str = Form("default_user"),
-    folder_id: int = Form(...),
-    source_type: str = Form("pdf"),
-):
-    logger.info(f"Batch creating {len(files)} documents in folder: {folder_id}")
-    if not files:
-        return {"status": "error", "message": "No files provided"}
-
-    try:
-        batch_files = []
-        for upload in files:
-            content = await upload.read()
-            file_name = upload.filename or "document.pdf"
-            batch_files.append((content, file_name, file_name))
-
-        return await asyncio.to_thread(
-            insert_docs_batch,
-            files=batch_files,
-            owner_id=owner_id,
-            folder_id=folder_id,
-            source_type=source_type,
-        )
-    except Exception as e:
-        logger.error(f"Error in batch document create: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
 @router.get("/documents")
 async def get_documents(folder_id: int | None = Query(default=None)):
     logger.info(f"Fetching documents (folder_id={folder_id})")
     return await asyncio.to_thread(get_all_documents, folder_id)
-
-@router.delete("/document/{document_id}")
-async def delete_doc(document_id: str):
-    logger.info(f"Deleting document: {document_id}")
-    return await asyncio.to_thread(delete_document, document_id)
 
 @router.get("/chunk/{chunk_id}")
 async def get_chunk_endpoint(chunk_id: str):
@@ -189,6 +142,73 @@ async def delete_conversation(thread_id: str):
     except Exception as e:
         logger.error(f"Error deleting thread: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+
+@router.post("/sync")
+async def trigger_sync():
+    """Manually trigger a SharePoint sync (admin use)."""
+    if _sync_lock.locked():
+        logger.warning("Manual sync requested but a sync cycle is already in progress")
+        return {"status": "error", "message": "A sync cycle is already in progress"}
+
+    async with _sync_lock:
+        logger.info("Manual sync triggered via API")
+        from src.services.sharepoint_sync_service import run_sync
+        try:
+            result = await asyncio.to_thread(run_sync)
+            return {"status": "success", "data": result.to_dict()}
+        except Exception as e:
+            logger.error(f"Manual sync failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+
+@router.get("/documents/{document_id}/view")
+async def view_document(document_id: str):
+    """
+    Get the SharePoint web view URL for a document on-the-fly,
+    and redirect the client to it.
+    """
+    from src.db.client import get_supabase
+    from fastapi.responses import RedirectResponse
+    from fastapi import HTTPException
+
+    try:
+        supabase = get_supabase()
+        response = await asyncio.to_thread(
+            lambda: supabase.table("documents")
+            .select("sharepoint_item_id, file_url")
+            .eq("id", int(document_id))
+            .execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        doc = response.data[0]
+        sp_item_id = doc.get("sharepoint_item_id")
+        file_url = doc.get("file_url")
+
+        if sp_item_id:
+            from src.services.sharepoint_sync_service import get_sharepoint_web_url
+            try:
+                web_url = await asyncio.to_thread(get_sharepoint_web_url, sp_item_id)
+                return RedirectResponse(url=web_url)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch SharePoint web view URL for document "
+                    f"{document_id}: {e}. Redirecting to stored URL instead."
+                )
+
+        if file_url:
+            return RedirectResponse(url=file_url)
+
+        raise HTTPException(status_code=404, detail="No view URL available")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error handling view redirect for document {document_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 app.include_router(router)
 
