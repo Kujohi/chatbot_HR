@@ -122,7 +122,6 @@ def get_documents_by_storage_paths(storage_paths: list[str]) -> list[dict]:
 
 
 def get_scanned_storage_paths(storage_paths: list[str]) -> list[str]:
-    from src.services.image_document_service import is_scanned_pdf
     docs = get_documents_by_storage_paths(storage_paths)
     scanned_paths: list[str] = []
     for doc in docs:
@@ -130,10 +129,6 @@ def get_scanned_storage_paths(storage_paths: list[str]) -> list[str]:
         if not path:
             continue
         if doc.get("is_image_pdf"):
-            scanned_paths.append(path)
-            continue
-        file_url = doc.get("file_url")
-        if file_url and is_scanned_pdf(file_url):
             scanned_paths.append(path)
     return scanned_paths
 
@@ -168,8 +163,11 @@ def index_docs(document_id: str) -> None:
     # Only PDFs can be scanned; Word docs are always text-based
     is_image_pdf = False
     if source_type == "pdf":
-        from src.services.image_document_service import is_scanned_pdf
-        is_image_pdf = is_scanned_pdf(file_url)
+        if ".drawio.pdf" in storage_path.lower():
+            is_image_pdf = True
+        else:
+            from src.services.image_document_service import is_scanned_pdf
+            is_image_pdf = is_scanned_pdf(file_url)
 
     supabase.table("documents").update({"is_image_pdf": is_image_pdf}).eq(
         "id", document_id
@@ -448,3 +446,6 @@ def upsert_document_for_sync(
     document_id = str(db_response.data[0]["id"])
     logger.info(f"Inserted new document {document_id} for sync: {storage_path}")
     return {"document_id": document_id, "is_new": True, "needs_reindex": True}
+
+if __name__ == "__main__":
+    print(get_scanned_storage_paths(["1. STDC & MTCV các phòng ban/1. Khối F&B/L'amuse + YGS/20240601_Nhân viên thu ngân - pha chế - phục vụ.pdf"]))

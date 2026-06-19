@@ -44,6 +44,8 @@ SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 
 def _source_type_from_name(file_name: str) -> str | None:
     """Return the source_type string for a supported file, or None if unsupported."""
+    if file_name.startswith("~$"):
+        return None
     ext = os.path.splitext(file_name)[1].lower()
     if ext == ".pdf":
         return "pdf"

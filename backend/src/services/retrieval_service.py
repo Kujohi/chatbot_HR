@@ -2,13 +2,13 @@ from typing import List, Dict
 import logging
 import getpass
 import os
+import unicodedata
 
 from pinecone import Pinecone
 from dotenv import load_dotenv
 from langchain_pinecone import PineconeVectorStore
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from src.db.client import get_supabase
-from rapidfuzz import fuzz
 
 from src.services.document_service import get_scanned_storage_paths
 from src.services.image_document_service import load_scanned_document_images
@@ -68,22 +68,20 @@ def search_text_chunks(document_paths: List[str], hypo_answers: List[str], limit
     if not document_paths:
         return ""
 
+    document_paths = [unicodedata.normalize("NFC", str(path)) for path in document_paths]
 
     try:
         supabase = get_supabase()
-        db_res = supabase.table("documents").select("storage_path").execute()
-        all_paths = list({doc["storage_path"] for doc in (db_res.data or []) if doc.get("storage_path")})
+        db_res = (
+            supabase.table("documents")
+            .select("storage_path")
+            .in_("storage_path", document_paths)
+            .execute()
+        )
+        path_filter = [doc["storage_path"] for doc in (db_res.data or []) if doc.get("storage_path")]
     except Exception as e:
-        logger.error(f"Failed to fetch all paths from database for similarity search: {e}")
-        all_paths = []
-
-    matched_paths = set()
-    for target_path in document_paths:
-        for p in all_paths:
-            if fuzz.ratio(p, target_path) >= 90:
-                matched_paths.add(p)
-
-    path_filter = list(matched_paths) if matched_paths else [str(path) for path in document_paths]
+        logger.error(f"Failed to query paths from database: {e}")
+        path_filter = document_paths
 
     all_docs: List[Dict] = []
     seen_contents = set()
@@ -114,10 +112,11 @@ def search_documents(document_paths: List[str], hypo_answers: List[str], limit: 
     if not document_paths:
         return {"text_context": "", "image_documents": []}
 
+    document_paths = [unicodedata.normalize("NFC", str(p)) for p in document_paths]
+
     scanned_paths = set(get_scanned_storage_paths(document_paths))
     text_paths = [path for path in document_paths if path not in scanned_paths]
     image_paths = [path for path in document_paths if path in scanned_paths]
-
     text_context = search_text_chunks(text_paths, hypo_answers, limit=limit) if text_paths else ""
     image_documents = load_scanned_document_images(image_paths) if image_paths else []
 
@@ -129,6 +128,9 @@ def search_documents(document_paths: List[str], hypo_answers: List[str], limit: 
     return {"text_context": text_context, "image_documents": image_documents}
 
 if __name__ == "__main__":
-    paths = search_document_summaries("điều kiện dành cho nhân viên nấu bún chả là gì?")
-    hypo_answers = ["điều kiện dành cho nhân viên nấu bún chả là gì?"]
-    print(search_documents(paths, hypo_answers, limit=2))
+    # paths = search_document_summaries("điều kiện dành cho nhân viên nấu bún chả là gì?")
+    # hypo_answers = ["điều kiện dành cho nhân viên nấu bún chả là gì?"]
+    # print(search_documents(paths, hypo_answers, limit=2))
+    document_paths = ["1. STDC & MTCV các phòng ban/1. Khối F&B/L'amuse Gourmet Cafe - Trần Não/Định Biên Nhân sự - L'Amuse Gourmet Cafe Trần Não.pdf", "1. STDC & MTCV các phòng ban/1. Khối F&B/L'amuse + YGS/20240601_Nhân viên thu ngân - pha chế - phục vụ.pdf"]
+    # print(get_scanned_storage_paths(document_paths))
+    print(search_documents(document_paths, []))
