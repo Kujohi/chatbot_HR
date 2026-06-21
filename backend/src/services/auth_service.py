@@ -191,13 +191,13 @@ def complete_login(request: Request, code: str, state: str) -> RedirectResponse:
     name = str(claims.get("name") or claims.get("preferred_username") or "User")
     email = str(claims.get("preferred_username") or claims.get("email") or "")
 
-    user_row = upsert_user(user_id, name=name, role="user")
+    user_row = upsert_user(user_id, name=name, role="admin")
     logger.info("Microsoft user upserted: id=%s name=%s", user_row.get("id"), user_row.get("name"))
     session_payload = {
         "user_id": user_id,
         "name": user_row.get("name") or name,
         "email": email,
-        "role": user_row.get("role") or "user",
+        "role": user_row.get("role") or "admin",
         "exp": time.time() + SESSION_TTL_SECONDS,
     }
 
@@ -233,13 +233,13 @@ def get_current_user(request: Request) -> dict[str, Any]:
         user = upsert_user(
             user_id,
             name=session.get("name") or "",
-            role=session.get("role") or "user",
+            role=session.get("role") or "admin",
         )
     return {
         "id": user["id"],
         "name": user.get("name") or session.get("name") or "",
         "email": session.get("email") or "",
-        "role": user.get("role") or session.get("role") or "user",
+        "role": user.get("role") or session.get("role") or "admin",
     }
 
 
