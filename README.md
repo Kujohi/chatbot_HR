@@ -16,7 +16,7 @@ Hệ thống hoạt động theo mô hình **Client-Server** kết hợp cơ ch�
 ### 🖼️ Sơ Đồ Kiến Trúc Tổng Quan
 ```
 [Chèn sơ đồ kiến trúc hệ thống tổng quan ở đây]
-Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI) <-> Database (Supabase) & VectorDB (Pinecone) & LLM (Gemini API)
+Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI) <-> PostgreSQL + pgvector & LLM (Gemini API) & SharePoint
 ```
 *(Vui lòng thiết kế hình ảnh sơ đồ kiến trúc và thay thế vào vị trí placeholder trên)*
 
@@ -30,7 +30,7 @@ Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI)
                                                  │
       ┌──────────────────────────────────────────┴──────────────────────────────────────────┐
       ▼ (Lưu trữ file gốc)                                                                  ▼ (Xử lý văn bản)
-[Supabase Storage]                                                                 [Đọc & Trích xuất chữ]
+[SharePoint]                                                                      [Đọc & Trích xuất chữ]
                                                                                             │
                                                                                             ▼
                                                                                    [Cắt nhỏ thành Chunks]
@@ -41,15 +41,15 @@ Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI)
                                                                  (embedding-2)                        (Thư mục, Tài liệu, Chunks)
                                                                        │
                                                                        ▼
-                                                                [Pinecone DB]
+[PostgreSQL + pgvector]
 ```
 1. **Upload**: Quản trị viên tải tài liệu (dạng PDF hoặc hình ảnh) lên một thư mục cụ thể thông qua giao diện Frontend.
-2. **Lưu trữ**: File gốc được tải lên **Supabase Storage**. Đồng thời thông tin tài liệu được ghi nhận vào bảng `documents` trong **Supabase PostgreSQL**.
+2. **Lưu trữ**: File gốc vẫn nằm ở **SharePoint**. Đồng thời thông tin tài liệu được ghi nhận vào bảng `documents` trong **PostgreSQL nội bộ**.
 3. **Trích xuất & Cắt nhỏ (Chunking)**: Backend FastAPI sử dụng các thư viện xử lý tài liệu (`PyMuPDF`/`pdf_image.py`) để trích xuất văn bản từ PDF/Hình ảnh. Văn bản sau đó được chia nhỏ thành các đoạn ngắn (chunks) có độ dài tối ưu kèm theo metadata.
 4. **Nhúng Vector (Embedding)**: Mỗi chunk văn bản được gửi qua **Google Gemini API** (model `gemini-embedding-2`) để tạo ra vector đặc trưng 3072 chiều.
 5. **Đồng bộ hóa Vector DB & Relational DB**:
-   - Vector và Metadata của chunk được lưu vào **Pinecone Vector Database**.
-   - Văn bản thô của chunk và id liên kết được lưu vào bảng `document_chunks` của **Supabase PostgreSQL** để đối chiếu khi hiển thị nguồn tham chiếu.
+   - Vector và Metadata của chunk được lưu vào bảng `document_chunks` của **PostgreSQL + pgvector**.
+   - Văn bản thô của chunk và id liên kết được lưu cùng bảng để đối chiếu khi hiển thị nguồn tham chiếu.
 
 ---
 
@@ -61,10 +61,10 @@ Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI)
                                       [Hóa vector câu hỏi bằng Gemini]
                                                    │
                                                    ▼ (Tìm kiếm ngữ cảnh tương đồng)
-                                            [Pinecone Vector DB]
+[PostgreSQL + pgvector]
                                                    │
                                                    ▼ (Trả về các chunks tương quan nhất)
-                                      [Lấy Chunks thô tương ứng từ Supabase]
+[Lấy Chunks thô tương ứng từ PostgreSQL]
                                                    │
                                                    ▼
                                   [Tổng hợp Prompt: Ngữ cảnh + Câu hỏi]
@@ -76,13 +76,13 @@ Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI)
 [Hiển thị câu trả lời trực quan] <── [Frontend] <──┘
 ```
 1. **Gửi câu hỏi**: Người dùng gửi tin nhắn hỏi về chính sách nhân sự thông qua giao diện chat.
-2. **Truy vấn Vector**: Backend FastAPI nhận câu hỏi, chuyển đổi câu hỏi thành vector bằng `gemini-embedding-2` và truy vấn trên **Pinecone** để tìm ra các đoạn văn bản có độ tương đồng ngữ nghĩa cao nhất.
-3. **Tổng hợp Ngữ cảnh (Context assembly)**: Hệ thống lấy nội dung văn bản thô của các đoạn tương ứng từ Supabase và tạo thành một Prompt hoàn chỉnh:
+2. **Truy vấn Vector**: Backend FastAPI nhận câu hỏi, chuyển đổi câu hỏi thành vector bằng `gemini-embedding-2` và truy vấn trên **PostgreSQL + pgvector** để tìm ra các đoạn văn bản có độ tương đồng ngữ nghĩa cao nhất.
+3. **Tổng hợp Ngữ cảnh (Context assembly)**: Hệ thống lấy nội dung văn bản thô của các đoạn tương ứng từ PostgreSQL và tạo thành một Prompt hoàn chỉnh:
    * *Ngữ cảnh: [Các đoạn tài liệu tìm thấy]*
    * *Câu hỏi của người dùng: [Nội dung câu hỏi]*
    * *Yêu cầu: Hãy trả lời câu hỏi dựa trên ngữ cảnh được cung cấp. Nếu không có thông tin, hãy báo không biết, không tự bịa ra thông tin.*
 4. **Sinh câu trả lời**: Prompt được gửi tới **Google Gemini LLM** để tạo câu trả lời tự nhiên, chính xác.
-5. **Phản hồi**: Câu trả lời kèm danh sách tài liệu tham chiếu (Citations) được trả về Frontend để hiển thị trực quan cho người dùng. Toàn bộ hội thoại được lưu vào bảng `chat_conversations` trên Supabase.
+5. **Phản hồi**: Câu trả lời kèm danh sách tài liệu tham chiếu (Citations) được trả về Frontend để hiển thị trực quan cho người dùng. Toàn bộ hội thoại được lưu vào bảng `chat_conversations` trên PostgreSQL nội bộ.
 
 ---
 
@@ -94,9 +94,9 @@ Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI)
 | **Backend** | FastAPI, Python 3.10, Uvicorn | API hiệu năng cao, xử lý song song và tích hợp bất đồng bộ. |
 | **Orchestration** | LangChain | Quản lý chuỗi xử lý RAG, kết nối LLM và Vector Store. |
 | **LLM & Embeddings** | Google Gemini API (`gemini-embedding-2`, Generative Models) | Tạo vector nhúng chất lượng cao và sinh câu trả lời tự nhiên. |
-| **Cơ sở dữ liệu** | Supabase (PostgreSQL) | Lưu trữ thông tin người dùng, lịch sử chat, cấu trúc thư mục, metadata tài liệu. |
-| **Lưu trữ file** | Supabase Storage | Lưu trữ file PDF và hình ảnh gốc do người dùng upload. |
-| **Vector Database** | Pinecone DB | Tìm kiếm tương đồng vector với tốc độ mili-giây. |
+| **Cơ sở dữ liệu** | PostgreSQL nội bộ | Lưu trữ thông tin người dùng, lịch sử chat, cấu trúc thư mục, metadata tài liệu. |
+| **Lưu trữ file** | SharePoint | Lưu trữ file PDF và hình ảnh gốc do người dùng upload. |
+| **Vector Database** | PostgreSQL + pgvector | Tìm kiếm tương đồng vector trực tiếp trong cùng hệ thống dữ liệu. |
 | **Đóng gói** | Docker & Docker Compose | Đóng gói ứng dụng thành container độc lập giúp dễ dàng chạy local và deploy. |
 
 ---
@@ -108,7 +108,7 @@ Menas_HR_bot/
 ├── backend/                  # Mã nguồn FastAPI Backend
 │   ├── src/
 │   │   ├── api/              # Định nghĩa API Routes (`routes.py`)
-│   │   ├── db/               # Kết nối Supabase database client
+│   │   ├── db/               # Kết nối PostgreSQL database client
 │   │   ├── services/         # Logic cốt lõi (RAG, Chat, PDF processing, Folders, v.v.)
 │   │   └── utils/            # Các hàm tiện ích (Logging, helpers...)
 │   ├── Dockerfile            # Dockerfile độc lập cho backend
@@ -117,11 +117,11 @@ Menas_HR_bot/
 │   ├── src/
 │   │   ├── app/              # Next.js App Router (trang chat, routing)
 │   │   ├── components/       # Các UI Component chính (`ChatUI.tsx` chiếm chủ đạo)
-│   │   └── lib/              # Các hàm kết nối API, Supabase client
+│   │   └── lib/              # Các hàm kết nối API
 │   ├── Dockerfile            # Dockerfile độc lập cho frontend
 │   └── package.json          # Quản lý thư viện frontend
 ├── database/                 # Chứa script khởi tạo database
-│   └── init.sql              # Script SQL thiết lập bảng & trigger trên Supabase
+│   └── init.sql              # Script SQL thiết lập bảng cho PostgreSQL nội bộ
 ├── Dockerfile                # Dockerfile gộp (Multi-stage) dùng cho deploy Render
 ├── docker-compose.yml        # Docker Compose chạy toàn bộ hệ thống ở Local
 ├── start.sh                  # Script khởi động gộp cả Backend và Frontend trong 1 container
@@ -138,14 +138,7 @@ Tạo file `backend/.env` từ file mẫu và điền các giá trị:
 # Google Gemini API
 GEMINI_API_KEY="AIzaSyChpUS..."
 
-# Pinecone Vector Database
-PINECONE_API_KEY="pcsk_3zyK..."
-PINECONE_INDEX_NAME="test-index"
-
-# Supabase (Database & Storage)
-SUPABASE_URL="https://wlxvinw..."
-SUPABASE_PUBLISHABLE_KEY="sb_publishable_..."
-SUPABASE_SECRET_ROLE_KEY="sb_secret_..."
+# PostgreSQL + pgvector
 
 # Cơ sở dữ liệu quan hệ (PostgreSQL)
 DATABASE_URL="postgresql://admin:123456@localhost:5432/menas_hr_db"
@@ -154,9 +147,6 @@ DATABASE_URL="postgresql://admin:123456@localhost:5432/menas_hr_db"
 ### 2. Cấu hình Frontend (`frontend/.env.local`)
 Tạo file `frontend/.env.local` với các nội dung sau:
 ```env
-NEXT_PUBLIC_SUPABASE_URL="https://wlxvinw..."
-NEXT_PUBLIC_SUPABASE_ANON_KEY="eyJhbGciOiJIUz..."
-
 # URL của Backend API (dùng để Next.js proxy request sang Backend)
 # Chạy local không docker: http://127.0.0.1:8000
 # Chạy bằng docker-compose: http://backend:8000
@@ -243,10 +233,8 @@ Dự án đã được thiết kế tối ưu hóa để deploy lên **Render** 
    * **Runtime**: Chọn `Docker`.
    * **Dockerfile Path**: `Dockerfile` (nằm ở thư mục gốc).
 4. Thêm các biến môi trường cấu hình tại mục **Environment** trên Render:
-   * Tất cả các biến môi trường trong file `backend/.env` (Gemini, Pinecone, Supabase keys).
+   * Tất cả các biến môi trường trong file `backend/.env` (Gemini, SharePoint, PostgreSQL).
    * Các biến môi trường frontend cần thiết:
-     - `NEXT_PUBLIC_SUPABASE_URL`
-     - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
      - `NEXT_PUBLIC_BACKEND_URL` = `http://127.0.0.1:8000` (FastAPI chạy nội bộ bên trong cùng container).
 5. Nhấn **Deploy** và đợi Render build & start. Hệ thống sẽ tự nhận cổng dịch vụ thông qua biến `$PORT` được Render cấp phát và chuyển tiếp yêu cầu đến Next.js trên cổng đó.
 

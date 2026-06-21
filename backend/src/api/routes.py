@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, Query
+from fastapi import FastAPI, APIRouter, Query, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
@@ -16,6 +16,14 @@ from src.services.folder_service import (
     list_folders,
     get_folder_breadcrumb,
 )
+from src.api.auth_routes import router as auth_router
+from src.db.repositories.threads import (
+    delete_thread,
+    get_thread_by_id,
+    insert_thread,
+    list_threads_by_user,
+)
+from src.services.auth_service import get_current_user
 
 TASK_TIMEOUT = 60
 POLLING_INTERVAL = 0.5
@@ -68,7 +76,12 @@ app = FastAPI(lifespan=lifespan)
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all origins for development
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:3000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -88,14 +101,28 @@ async def health():
     return {"message": "Healthy"}
 
 @router.post("/chat/complete")
-async def chat_complete(request: ChatCompleteRequest):
+async def chat_complete(request: ChatCompleteRequest, http_request: Request):
     thread_id = request.thread_id
     message = request.message
     sync_request = request.sync_request
     logger.info(f"Complete chat from user {thread_id}: {message}")
     if sync_request:
+        current_user = await asyncio.to_thread(get_current_user, http_request)
+        existing_thread = await asyncio.to_thread(get_thread_by_id, thread_id)
+        if not existing_thread:
+            title = message[:30] + ("..." if len(message) > 30 else "")
+            await asyncio.to_thread(insert_thread, thread_id, current_user["id"], title)
+        elif str(existing_thread.get("user_id")) != str(current_user["id"]):
+            raise HTTPException(status_code=403, detail="Thread does not belong to the current user")
         response = await asyncio.to_thread(llm_handle_message, thread_id, message)
         return {"response": response}
+
+@router.get("/threads")
+async def list_threads_endpoint(http_request: Request):
+    current_user = await asyncio.to_thread(get_current_user, http_request)
+    threads = await asyncio.to_thread(list_threads_by_user, current_user["id"])
+    return {"status": "success", "data": threads}
+
 
 @router.get("/folders")
 async def list_folders_endpoint(parent_id: int | None = Query(default=None)):
@@ -130,14 +157,16 @@ async def get_conversation(thread_id: str):
         return {"status": "error", "message": str(e)}
 
 @router.delete("/chat/conversation/{thread_id}")
-async def delete_conversation(thread_id: str):
+async def delete_conversation(thread_id: str, http_request: Request):
     logger.info(f"Deleting conversation thread: {thread_id}")
-    from src.db.client import get_supabase
     try:
-        supabase = get_supabase()
-        await asyncio.to_thread(
-            lambda: supabase.table("threads").delete().eq("id", thread_id).execute()
-        )
+        current_user = await asyncio.to_thread(get_current_user, http_request)
+        existing_thread = await asyncio.to_thread(get_thread_by_id, thread_id)
+        if not existing_thread:
+            return {"status": "success", "message": "Thread deleted successfully"}
+        if str(existing_thread.get("user_id")) != str(current_user["id"]):
+            raise HTTPException(status_code=403, detail="Thread does not belong to the current user")
+        await asyncio.to_thread(delete_thread, thread_id)
         return {"status": "success", "message": "Thread deleted successfully"}
     except Exception as e:
         logger.error(f"Error deleting thread: {str(e)}")
@@ -168,22 +197,15 @@ async def view_document(document_id: str):
     Get the SharePoint web view URL for a document on-the-fly,
     and redirect the client to it.
     """
-    from src.db.client import get_supabase
+    from src.db.repositories.documents import get_document_by_id
     from fastapi.responses import RedirectResponse
     from fastapi import HTTPException
 
     try:
-        supabase = get_supabase()
-        response = await asyncio.to_thread(
-            lambda: supabase.table("documents")
-            .select("sharepoint_item_id, file_url")
-            .eq("id", int(document_id))
-            .execute()
-        )
-        if not response.data:
+        doc = await asyncio.to_thread(get_document_by_id, int(document_id))
+        if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        doc = response.data[0]
         sp_item_id = doc.get("sharepoint_item_id")
         file_url = doc.get("file_url")
 
@@ -211,6 +233,7 @@ async def view_document(document_id: str):
 
 
 app.include_router(router)
+app.include_router(auth_router)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

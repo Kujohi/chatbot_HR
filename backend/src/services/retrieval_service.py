@@ -1,33 +1,15 @@
 from typing import List, Dict
 import logging
-import getpass
-import os
 import unicodedata
 
-from pinecone import Pinecone
-from dotenv import load_dotenv
-from langchain_pinecone import PineconeVectorStore
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from src.db.client import get_supabase
+from src.db.repositories.vectors import search_vectors
 
 from src.services.document_service import get_scanned_storage_paths
 from src.services.image_document_service import load_scanned_document_images
 
-load_dotenv()
-
 logger = logging.getLogger(__name__)
-
-if not os.getenv("PINECONE_API_KEY"):
-    os.environ["PINECONE_API_KEY"] = getpass.getpass("Enter your Pinecone API key: ")
-
-pinecone_api_key = os.environ.get("PINECONE_API_KEY")
-
-pc = Pinecone(api_key=pinecone_api_key)
-
-index_name = os.getenv("PINECONE_INDEX_NAME")  # change if desired
-index = pc.Index(index_name)
 embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2")
-vector_store = PineconeVectorStore(index=index, embedding=embeddings)
 
 def format_docs_context(docs: List[Dict]) -> str:
     """
@@ -44,15 +26,12 @@ def search_document_summaries(query: str, limit: int = 5) -> List[str]:
     Find relevant documents by matching against summary vectors (isDocument=true).
     Returns storage_path strings (same values stored in documents.storage_path).
     """
-    docs = vector_store.similarity_search(
-        query,
-        k=limit,
-        filter={"isDocument": {"$eq": True}},
-    )
+    query_embedding = embeddings.embed_query(query)
+    docs = search_vectors(query_embedding, limit=limit, is_document=True)
     document_paths: List[str] = []
     seen_paths = set()
     for doc in docs:
-        path = str(doc.metadata.get("storage_path", ""))
+        path = str((doc.get("metadata") or {}).get("storage_path", ""))
         if path and path not in seen_paths:
             seen_paths.add(path)
             document_paths.append(path)
@@ -62,45 +41,30 @@ def search_document_summaries(query: str, limit: int = 5) -> List[str]:
 
 def search_text_chunks(document_paths: List[str], hypo_answers: List[str], limit: int = 5) -> str:
     """
-    Search chunk vectors in Pinecone for text PDFs, scoped to the given storage paths.
-    Matches paths with at least 90% character similarity using rapidfuzz.
+    Search chunk vectors in PostgreSQL for text PDFs, scoped to the given storage paths.
     """
     if not document_paths:
         return ""
 
     document_paths = [unicodedata.normalize("NFC", str(path)) for path in document_paths]
 
-    try:
-        supabase = get_supabase()
-        db_res = (
-            supabase.table("documents")
-            .select("storage_path")
-            .in_("storage_path", document_paths)
-            .execute()
-        )
-        path_filter = [doc["storage_path"] for doc in (db_res.data or []) if doc.get("storage_path")]
-    except Exception as e:
-        logger.error(f"Failed to query paths from database: {e}")
-        path_filter = document_paths
-
     all_docs: List[Dict] = []
     seen_contents = set()
-    logger.info(f"Search chunks for storage_paths={path_filter}, queries: {hypo_answers}")
+    logger.info(f"Search chunks for storage_paths={document_paths}, queries: {hypo_answers}")
     for query in hypo_answers:
         logger.info(f"Search chunks for query: {query}")
-        docs = vector_store.similarity_search(
-            query,
-            k=limit,
-            filter={
-                "storage_path": {"$in": path_filter},
-                "chunk_id": {"$exists": True},
-            },
+        query_embedding = embeddings.embed_query(query)
+        docs = search_vectors(
+            query_embedding,
+            limit=limit,
+            is_document=False,
+            storage_paths=document_paths,
         )
         for doc in docs:
-            content_hash = hash(doc.page_content)
+            content_hash = hash(doc.get("content", ""))
             if content_hash not in seen_contents:
                 seen_contents.add(content_hash)
-                all_docs.append({"page_content": doc.page_content, "metadata": doc.metadata})
+                all_docs.append({"page_content": doc.get("content", ""), "metadata": doc.get("metadata") or {}})
     logger.info(f"Retrieved {len(all_docs)} chunks for hypothesis answers")
     return format_docs_context(all_docs)
 

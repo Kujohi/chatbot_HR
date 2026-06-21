@@ -21,12 +21,15 @@ import requests
 from msal import ConfidentialClientApplication
 from dotenv import load_dotenv
 
-from src.db.client import get_supabase
 from src.services.document_service import (
     upsert_document_for_sync,
     index_docs,
     rollback_document,
     delete_document,
+)
+from src.db.repositories.documents import (
+    list_documents_with_sharepoint_ids,
+    update_document,
 )
 from src.services.folder_service import (
     get_or_create_folder_for_path,
@@ -314,9 +317,7 @@ def run_sync() -> SyncResult:
             index_docs(document_id)
 
             # Mark as indexed
-            get_supabase().table("documents").update(
-                {"status": "indexed"}
-            ).eq("id", int(document_id)).execute()
+            update_document(document_id, {"status": "indexed"})
 
             if upsert_result["is_new"]:
                 result.new_count += 1
@@ -353,14 +354,8 @@ def run_sync() -> SyncResult:
     # Only run if we weren't stopped by rate limit (we have a complete file list)
     if not result.stopped_by_rate_limit:
         try:
-            supabase = get_supabase()
-            all_docs = (
-                supabase.table("documents")
-                .select("id, sharepoint_item_id, storage_path")
-                .not_.is_("sharepoint_item_id", "null")
-                .execute()
-            )
-            for doc in (all_docs.data or []):
+            all_docs = list_documents_with_sharepoint_ids()
+            for doc in all_docs:
                 if doc["sharepoint_item_id"] not in seen_item_ids:
                     logger.info(
                         f"Deleting document no longer in SharePoint: "

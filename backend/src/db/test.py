@@ -1,10 +1,6 @@
-from src.db.client import get_supabase
+from src.db.postgres import fetch_one
 
-supabase = get_supabase()
 
-response = supabase.auth.sign_in_with_password({
-    "email": "admin@gmail.com",
-    "password": "admin"
-})
+result = fetch_one("SELECT 1 AS ok")
+print(result)
 
-print(response.session.access_token)

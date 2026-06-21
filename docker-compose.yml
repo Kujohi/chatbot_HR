@@ -1,4 +1,18 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: hr_bot_postgres
+    environment:
+      POSTGRES_DB: menas_hr_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    restart: always
+
   backend:
     build:
       context: ./backend
@@ -6,8 +20,14 @@ services:
     container_name: hr_bot_backend
     expose:
       - "8000"
+    ports:
+      - "8000:8000"
     env_file:
       - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/menas_hr_db
+    depends_on:
+      - postgres
     restart: always
 
   frontend:
@@ -36,3 +56,6 @@ services:
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     restart: always
+
+volumes:
+  postgres_data:

@@ -1,13 +1,10 @@
+from src.db.postgres import get_database_url, get_pool
 
-import os
-from supabase import create_client, Client
-from supabase.client import ClientOptions
-from dotenv import load_dotenv
-load_dotenv()
 
-def get_supabase():
-    supabase: Client = create_client(
-    os.environ.get("SUPABASE_URL"),
-    os.environ.get("SUPABASE_SECRET_ROLE_KEY") or os.environ.get("SUPABASE_PUBLISHABLE_KEY"),
-)
-    return supabase
+def get_db_pool():
+    return get_pool()
+
+
+def get_db_dsn() -> str:
+    return get_database_url()
+

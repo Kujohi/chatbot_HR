@@ -10,14 +10,12 @@ google-genai
 langchain
 langchain-google-genai
 langchain-community
-langchain-pinecone
-pinecone
 bm25s
 ipython
 pymupdf
 Pillow
-supabase
 python-multipart
 msal
 python-docx
 rapidfuzz
+pgvector

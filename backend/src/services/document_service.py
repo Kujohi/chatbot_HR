@@ -1,95 +1,86 @@
-from src.db.client import get_supabase
 import logging
 import uuid
-from src.utils.utils import setup_logging
+
+from src.db.repositories.documents import (
+    delete_document as repo_delete_document,
+    delete_document_chunks as repo_delete_document_chunks,
+    get_chunk_by_chunk_id,
+    get_document_by_folder_and_storage_path,
+    get_document_by_id,
+    get_document_by_sharepoint_item_id,
+    get_document_chunks,
+    get_document_reference as repo_get_document_reference,
+    insert_document,
+    list_chunk_ids,
+    list_documents,
+    list_documents_by_storage_paths,
+    list_documents_with_sharepoint_ids,
+    update_document,
+)
 from src.services.document_processing_service import (
+    document_summary_vector_id,
+    delete_document_vectors,
+    index_document_summary,
     split_document,
     store_document_chunks,
-    pinecone_index,
-    pinecone_delete,
-    pinecone_index_document_summary,
-    document_summary_vector_id,
 )
 from src.services.folder_service import get_folder
 from src.services.rewriter import rewrite_path_to_summary
+from src.utils.utils import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
 def _cleanup_document_index(document_id: str) -> None:
-    """Remove Pinecone vectors and chunk rows; keep the documents row."""
-    supabase = get_supabase()
-    chunk_response = (
-        supabase.table("document_chunks")
-        .select("chunk_id")
-        .eq("document_id", document_id)
-        .execute()
-    )
-    chunk_ids = [chunk["chunk_id"] for chunk in chunk_response.data if chunk.get("chunk_id")]
+    """Remove vector rows and chunk rows; keep the documents row."""
+    chunk_ids = list_chunk_ids(document_id)
 
     try:
-        pinecone_delete([document_summary_vector_id(document_id)])
-    except Exception as pinecone_e:
-        logger.warning(f"Failed to delete Pinecone document summary: {pinecone_e}")
+        delete_document_vectors([document_summary_vector_id(document_id)])
+    except Exception as vector_error:
+        logger.warning(f"Failed to delete document summary vector: {vector_error}")
 
     if chunk_ids:
         try:
-            pinecone_delete(chunk_ids)
-        except Exception as pinecone_e:
-            logger.warning(f"Failed to delete Pinecone chunks: {pinecone_e}")
+            delete_document_vectors(chunk_ids)
+        except Exception as vector_error:
+            logger.warning(f"Failed to delete chunk vectors: {vector_error}")
 
-    supabase.table("document_chunks").delete().eq("document_id", document_id).execute()
+    repo_delete_document_chunks(document_id)
 
 
 def _find_document_in_folder(folder_id: int, storage_path: str) -> dict | None:
-    supabase = get_supabase()
-    response = (
-        supabase.table("documents")
-        .select("*")
-        .eq("folder_id", folder_id)
-        .eq("storage_path", storage_path)
-        .limit(1)
-        .execute()
-    )
-    if response.data:
-        return response.data[0]
-    return None
+    return get_document_by_folder_and_storage_path(folder_id, storage_path)
 
 
 def rollback_document(document_id: str) -> None:
     """
-    Remove document_chunks rows, Pinecone vectors, and the documents row.
+    Remove document_chunks rows, vector rows, and the documents row.
     Used when indexing fails and we need to undo the DB insert.
     """
-    supabase = get_supabase()
-    doc_response = supabase.table("documents").select("*").eq("id", document_id).execute()
-    if not doc_response.data:
+    doc_response = get_document_by_id(document_id)
+    if not doc_response:
         logger.warning(f"Rollback skipped: document {document_id} not found")
         return
 
-    chunk_response = (
-        supabase.table("document_chunks")
-        .select("chunk_id")
-        .eq("document_id", document_id)
-        .execute()
-    )
-    chunk_ids = [chunk["chunk_id"] for chunk in chunk_response.data if chunk.get("chunk_id")]
+    chunk_ids = list_chunk_ids(document_id)
 
     try:
-        pinecone_delete([document_summary_vector_id(document_id)])
-    except Exception as pinecone_e:
-        logger.warning(f"Rollback: failed to delete Pinecone document summary: {pinecone_e}")
+        delete_document_vectors([document_summary_vector_id(document_id)])
+    except Exception as vector_error:
+        logger.warning(f"Rollback: failed to delete document summary vector: {vector_error}")
 
     if chunk_ids:
         try:
-            pinecone_delete(chunk_ids)
-        except Exception as pinecone_e:
-            logger.warning(f"Rollback: failed to delete Pinecone chunks: {pinecone_e}")
+            delete_document_vectors(chunk_ids)
+        except Exception as vector_error:
+            logger.warning(f"Rollback: failed to delete chunk vectors: {vector_error}")
 
-    supabase.table("document_chunks").delete().eq("document_id", document_id).execute()
-    supabase.table("documents").delete().eq("id", document_id).execute()
-    logger.info(f"Rolled back document {document_id} from Supabase")
+    repo_delete_document_chunks(document_id)
+    repo_delete_document(document_id)
+    logger.info(f"Rolled back document {document_id} from PostgreSQL")
+
 
 def index_docs_summary(
     document_id: str,
@@ -97,9 +88,9 @@ def index_docs_summary(
     title: str = "",
     is_image_doc: bool = False,
 ) -> None:
-    """Generate a path-based summary and index it in Pinecone for document routing."""
+    """Generate a path-based summary and index it for document routing."""
     summary = rewrite_path_to_summary(file_path)
-    pinecone_index_document_summary(
+    index_document_summary(
         document_id=document_id,
         summary=summary,
         storage_path=file_path,
@@ -109,16 +100,7 @@ def index_docs_summary(
 
 
 def get_documents_by_storage_paths(storage_paths: list[str]) -> list[dict]:
-    if not storage_paths:
-        return []
-    supabase = get_supabase()
-    response = (
-        supabase.table("documents")
-        .select("id, title, file_url, storage_path, is_image_pdf, sharepoint_item_id")
-        .in_("storage_path", storage_paths)
-        .execute()
-    )
-    return response.data or []
+    return list_documents_by_storage_paths(storage_paths)
 
 
 def get_scanned_storage_paths(storage_paths: list[str]) -> list[str]:
@@ -141,17 +123,10 @@ def index_docs(document_id: str) -> None:
     Word docs: summary vector + content chunks (never scanned).
     Raises on failure so callers can roll back.
     """
-    supabase = get_supabase()
-    response = (
-        supabase.table("documents")
-        .select("storage_path, title, file_url, source_type")
-        .eq("id", document_id)
-        .execute()
-    )
-    if not response.data:
+    doc_data = get_document_by_id(document_id)
+    if not doc_data:
         raise Exception(f"Document with ID {document_id} not found")
 
-    doc_data = response.data[0]
     storage_path = doc_data.get("storage_path")
     file_url = doc_data.get("file_url")
     source_type = doc_data.get("source_type", "pdf")
@@ -167,11 +142,10 @@ def index_docs(document_id: str) -> None:
             is_image_pdf = True
         else:
             from src.services.image_document_service import is_scanned_pdf
+
             is_image_pdf = is_scanned_pdf(file_url)
 
-    supabase.table("documents").update({"is_image_pdf": is_image_pdf}).eq(
-        "id", document_id
-    ).execute()
+    update_document(document_id, {"is_image_pdf": is_image_pdf})
 
     index_docs_summary(
         document_id=document_id,
@@ -188,7 +162,6 @@ def index_docs(document_id: str) -> None:
 
     chunks = split_document(document_id)
     store_document_chunks(chunks)
-    pinecone_index(chunks)
     logger.info(f"Document {document_id} indexed successfully ({len(chunks)} chunks)")
 
 
@@ -197,23 +170,18 @@ def get_all_documents(folder_id: int | None = None):
     Retrieves documents, optionally filtered by folder.
     """
     try:
-        supabase = get_supabase()
-        query = supabase.table("documents").select(
-            "*, document_folders(id, name, slug)"
-        )
-        if folder_id is not None:
-            query = query.eq("folder_id", folder_id)
-        response = query.order("created_at", desc=True).execute()
+        data = list_documents(folder_id)
         return {
             "status": "success",
-            "data": response.data
+            "data": data,
         }
     except Exception as e:
         logger.error(f"Error fetching documents: {str(e)}")
         return {
             "status": "error",
-            "message": str(e)
+            "message": str(e),
         }
+
 
 def _is_valid_chunk_uuid(value: str) -> bool:
     try:
@@ -238,17 +206,10 @@ def get_document_reference(document_id: str):
     Return reference info for a whole document (used by scanned PDF citations).
     """
     try:
-        supabase = get_supabase()
-        response = (
-            supabase.table("documents")
-            .select("id, title, file_url, is_image_pdf")
-            .eq("id", int(document_id))
-            .execute()
-        )
-        if not response.data:
+        doc = repo_get_document_reference(int(document_id))
+        if not doc:
             return {"status": "error", "message": "Document not found"}
 
-        doc = response.data[0]
         title = doc.get("title") or "Unknown Document"
         if doc.get("is_image_pdf"):
             content = (
@@ -288,23 +249,15 @@ def get_chunk(chunk_id: str):
         return {"status": "error", "message": "Invalid chunk id"}
 
     try:
-        supabase = get_supabase()
-        response = (
-            supabase.table("document_chunks")
-            .select("*, documents(title, file_url)")
-            .eq("chunk_id", chunk_id)
-            .execute()
-        )
-        if not response.data:
+        chunk_data = get_chunk_by_chunk_id(chunk_id)
+        if not chunk_data:
             return {"status": "error", "message": "Chunk not found"}
 
-        chunk_data = response.data[0]
-        doc_meta = chunk_data.get("documents") or {}
         formatted_data = {
             "content": chunk_data.get("content"),
             "metadata": {
-                "title": doc_meta.get("title") or "Unknown Document",
-                "file_url": doc_meta.get("file_url"),
+                "title": chunk_data.get("title") or "Unknown Document",
+                "file_url": chunk_data.get("file_url"),
                 "document_id": chunk_data.get("document_id"),
             },
         }
@@ -314,51 +267,47 @@ def get_chunk(chunk_id: str):
         logger.error(f"Error fetching chunk: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+
 def delete_document(document_id: str):
     """
-    Deletes a document: Pinecone vectors, chunk rows, and the documents row.
+    Deletes a document: vector rows, chunk rows, and the documents row.
     No storage file cleanup needed — files live in SharePoint.
     """
     try:
-        supabase = get_supabase()
+        doc_response = get_document_by_id(document_id)
+        chunk_ids = list_chunk_ids(document_id)
 
-        # 1. Get document metadata
-        doc_response = supabase.table("documents").select("*").eq("id", document_id).execute()
-        chunk_response = supabase.table("document_chunks").select("*").eq("document_id", document_id).execute()
-
-        if not doc_response.data:
+        if not doc_response:
             return {"status": "error", "message": "Document not found"}
 
-        # 2. Delete from pinecone index (document summary + chunks)
         try:
-            pinecone_delete([document_summary_vector_id(document_id)])
-        except Exception as pinecone_e:
-            logger.warning(f"Failed to delete document summary from Pinecone: {str(pinecone_e)}")
+            delete_document_vectors([document_summary_vector_id(document_id)])
+        except Exception as vector_error:
+            logger.warning(
+                f"Failed to delete document summary vector: {str(vector_error)}"
+            )
 
-        chunk_ids = [chunk.get("chunk_id") for chunk in chunk_response.data if chunk.get("chunk_id")]
         if chunk_ids:
             try:
-                logger.info(f"Deleting {len(chunk_ids)} chunks from Pinecone")
-                pinecone_delete(chunk_ids)
-            except Exception as pinecone_e:
-                logger.warning(f"Failed to delete chunks from Pinecone: {str(pinecone_e)}")
+                logger.info(f"Deleting {len(chunk_ids)} chunk vectors")
+                delete_document_vectors(chunk_ids)
+            except Exception as vector_error:
+                logger.warning(f"Failed to delete chunk vectors: {str(vector_error)}")
 
-        # 3. Delete chunk rows from database
-        supabase.table("document_chunks").delete().eq("document_id", document_id).execute()
+        repo_delete_document_chunks(document_id)
 
-        # 4. Delete document row from database
         logger.info(f"Deleting document metadata for ID: {document_id}")
-        supabase.table("documents").delete().eq("id", document_id).execute()
+        repo_delete_document(document_id)
 
         return {
             "status": "success",
-            "message": "Document deleted successfully"
+            "message": "Document deleted successfully",
         }
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
         return {
             "status": "error",
-            "message": str(e)
+            "message": str(e),
         }
 
 
@@ -371,6 +320,7 @@ def _timestamps_equal(t1_str: str, t2_str: str) -> bool:
     if not t1_str or not t2_str:
         return False
     from datetime import datetime
+
     try:
         # Standardize Z suffix to +00:00
         s1 = t1_str.replace("Z", "+00:00")
@@ -395,39 +345,37 @@ def upsert_document_for_sync(
     Insert or update a document row for SharePoint sync.
     Returns {"document_id": ..., "is_new": bool, "needs_reindex": bool}.
     """
-    supabase = get_supabase()
+    existing = get_document_by_sharepoint_item_id(sharepoint_item_id)
 
-    # Check if document already exists by sharepoint_item_id
-    existing = (
-        supabase.table("documents")
-        .select("id, sharepoint_modified_at")
-        .eq("sharepoint_item_id", sharepoint_item_id)
-        .limit(1)
-        .execute()
-    )
-
-    if existing.data:
-        doc = existing.data[0]
-        old_modified = doc.get("sharepoint_modified_at") or ""
+    if existing:
+        old_modified = existing.get("sharepoint_modified_at") or ""
         if _timestamps_equal(old_modified, sharepoint_modified_at):
-            # Unchanged — skip completely (no DB update)
-            return {"document_id": str(doc["id"]), "is_new": False, "needs_reindex": False}
+            return {
+                "document_id": str(existing["id"]),
+                "is_new": False,
+                "needs_reindex": False,
+            }
 
-        # Modified — update metadata, caller will re-index
-        _cleanup_document_index(str(doc["id"]))
-        supabase.table("documents").update({
-            "title": title,
-            "file_url": file_url,
-            "storage_path": storage_path,
-            "folder_id": folder_id,
-            "source_type": source_type,
-            "sharepoint_modified_at": sharepoint_modified_at,
-            "status": "uploaded",
-            "is_image_pdf": False,
-        }).eq("id", doc["id"]).execute()
-        return {"document_id": str(doc["id"]), "is_new": False, "needs_reindex": True}
+        _cleanup_document_index(str(existing["id"]))
+        update_document(
+            existing["id"],
+            {
+                "title": title,
+                "file_url": file_url,
+                "storage_path": storage_path,
+                "folder_id": folder_id,
+                "source_type": source_type,
+                "sharepoint_modified_at": sharepoint_modified_at,
+                "status": "uploaded",
+                "is_image_pdf": False,
+            },
+        )
+        return {
+            "document_id": str(existing["id"]),
+            "is_new": False,
+            "needs_reindex": True,
+        }
 
-    # New document
     document_data = {
         "title": title,
         "source_type": source_type,
@@ -439,13 +387,17 @@ def upsert_document_for_sync(
         "sharepoint_item_id": sharepoint_item_id,
         "sharepoint_modified_at": sharepoint_modified_at,
     }
-    db_response = supabase.table("documents").insert(document_data).execute()
-    if not db_response.data:
-        raise Exception(f"Failed to insert document: {document_data}")
-
-    document_id = str(db_response.data[0]["id"])
+    row = insert_document(document_data)
+    document_id = str(row["id"])
     logger.info(f"Inserted new document {document_id} for sync: {storage_path}")
     return {"document_id": document_id, "is_new": True, "needs_reindex": True}
 
+
 if __name__ == "__main__":
-    print(get_scanned_storage_paths(["1. STDC & MTCV các phòng ban/1. Khối F&B/L'amuse + YGS/20240601_Nhân viên thu ngân - pha chế - phục vụ.pdf"]))
+    print(
+        get_scanned_storage_paths(
+            [
+                "1. STDC & MTCV các phòng ban/1. Khối F&B/L'amuse + YGS/20240601_Nhân viên thu ngân - pha chế - phục vụ.pdf"
+            ]
+        )
+    )

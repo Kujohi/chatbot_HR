@@ -27,7 +27,6 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { usePathname } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 import { API_BASE } from "@/lib/api";
 
 function getThreadIdFromPath(pathname: string | null): string {
@@ -149,7 +148,9 @@ export default function ChatUI() {
     setIsLoadingChunk(true);
     setIsChunkModalOpen(true);
     try {
-      const response = await fetch(`${API_BASE}/chunk/${chunkId}`);
+      const response = await fetch(`${API_BASE}/chunk/${chunkId}`, {
+        credentials: "include",
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.status === "success") {
@@ -171,7 +172,9 @@ export default function ChatUI() {
     try {
       const parentQuery =
         currentFolderId != null ? `?parent_id=${currentFolderId}` : "";
-      const foldersRes = await fetch(`${API_BASE}/folders${parentQuery}`);
+      const foldersRes = await fetch(`${API_BASE}/folders${parentQuery}`, {
+        credentials: "include",
+      });
       if (foldersRes.ok) {
         const foldersData = await foldersRes.json();
         if (foldersData.status === "success") {
@@ -181,8 +184,12 @@ export default function ChatUI() {
 
       if (currentFolderId != null) {
         const [breadcrumbRes, docsRes] = await Promise.all([
-          fetch(`${API_BASE}/folders/${currentFolderId}/breadcrumb`),
-          fetch(`${API_BASE}/documents?folder_id=${currentFolderId}`),
+          fetch(`${API_BASE}/folders/${currentFolderId}/breadcrumb`, {
+            credentials: "include",
+          }),
+          fetch(`${API_BASE}/documents?folder_id=${currentFolderId}`, {
+            credentials: "include",
+          }),
         ]);
         if (breadcrumbRes.ok) {
           const breadcrumbData = await breadcrumbRes.json();
@@ -225,7 +232,7 @@ export default function ChatUI() {
     setIsSyncing(true);
     setSyncStatus({ type: null, message: "" });
     try {
-      const response = await fetch(`${API_BASE}/sync`, { method: "POST" });
+      const response = await fetch(`${API_BASE}/sync`, { method: "POST", credentials: "include" });
       const data = await response.json();
       if (data.status === "success") {
         const d = data.data;
@@ -261,47 +268,50 @@ export default function ChatUI() {
 
   useEffect(() => {
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user || null);
-      if (session?.user) {
-        fetchUserProfile(session.user.id);
-        fetchThreads(session.user.id);
-      } else {
+      try {
+        const response = await fetch(`${API_BASE}/auth/me`, {
+          credentials: "include",
+        });
+        if (!response.ok) {
+          setUser(null);
+          setUserProfile(null);
+          setThreads([]);
+          return;
+        }
+
+        const data = await response.json();
+        if (data.status === "success" && data.data) {
+          setUser(data.data);
+          setUserProfile(data.data);
+          await fetchThreads();
+        }
+      } catch (error) {
+        console.error("Error checking session:", error);
+        setUser(null);
+        setUserProfile(null);
+        setThreads([]);
+      } finally {
         setIsAuthLoading(false);
       }
     };
 
     checkSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
-      if (session?.user) {
-        fetchUserProfile(session.user.id);
-        fetchThreads(session.user.id);
-      } else {
-        setUserProfile(null);
-        setThreads([]);
-        setIsAuthLoading(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
   }, []);
 
-  const fetchUserProfile = async (userId: string) => {
+  const fetchThreads = async () => {
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single();
-      
-      if (error) throw error;
-      setUserProfile(data);
+      const response = await fetch(`${API_BASE}/threads`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        return;
+      }
+      const data = await response.json();
+      if (data.status === "success") {
+        setThreads(data.data || []);
+      }
     } catch (error) {
-      console.error('Error fetching user profile:', error);
-    } finally {
-      setIsAuthLoading(false);
+      console.error('Error fetching threads:', error);
     }
   };
 
@@ -312,13 +322,12 @@ export default function ChatUI() {
     try {
       const response = await fetch(`${API_BASE}/chat/conversation/${id}`, {
         method: "DELETE",
+        credentials: "include",
       });
       
       if (response.ok) {
         // Refresh the list
-        if (user) {
-          fetchThreads(user.id);
-        }
+        await fetchThreads();
         if (threadId === id) {
           startNewChat();
         }
@@ -328,21 +337,6 @@ export default function ChatUI() {
     } catch (error) {
       console.error("Error deleting conversation:", error);
       alert("Error deleting conversation");
-    }
-  };
-
-  const fetchThreads = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('threads')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      setThreads(data || []);
-    } catch (error) {
-      console.error('Error fetching threads:', error);
     }
   };
 
@@ -369,7 +363,9 @@ export default function ChatUI() {
       const fetchId = ++messagesFetchIdRef.current;
       setIsLoadingMessages(true);
       try {
-        const response = await fetch(`${API_BASE}/chat/conversation/${threadId}`);
+        const response = await fetch(`${API_BASE}/chat/conversation/${threadId}`, {
+          credentials: "include",
+        });
         if (response.ok) {
           const data = await response.json();
           if (
@@ -411,16 +407,20 @@ export default function ChatUI() {
   }, [threadId, isSending]);
 
   const handleLogin = async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: 'azure',
-      options: {
-        scopes: 'email profile openid',
-      },
-    });
+    window.location.href = `${API_BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + window.location.pathname)}`;
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+    setUser(null);
+    setUserProfile(null);
+    setThreads([]);
+    setMessages([]);
+    startNewChat();
+    window.location.href = "/";
   };
 
   const startNewChat = () => {
@@ -463,15 +463,6 @@ export default function ChatUI() {
 
     if (isNewThread) {
       window.history.replaceState(null, "", `/c/${currentThreadId}`);
-
-      if (user) {
-        await supabase.from('threads').insert({
-          id: currentThreadId,
-          user_id: user.id,
-          title: userMessage.content.slice(0, 30) + (userMessage.content.length > 30 ? '...' : '')
-        });
-        fetchThreads(user.id);
-      }
     }
 
     try {
@@ -480,6 +471,7 @@ export default function ChatUI() {
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include",
         signal: abortController.signal,
         body: JSON.stringify({
           thread_id: currentThreadId,
@@ -494,6 +486,10 @@ export default function ChatUI() {
       }
 
       const data = await response.json();
+
+      if (isNewThread) {
+        await fetchThreads();
+      }
       
       if (threadIdRef.current !== currentThreadId) return;
 

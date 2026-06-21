@@ -2,7 +2,14 @@ import logging
 import re
 import unicodedata
 
-from src.db.client import get_supabase
+from src.db.repositories.folders import (
+    delete_folder,
+    get_folder_by_id,
+    get_or_create_folder,
+    list_all_folder_links,
+    list_folders as repo_list_folders,
+)
+from src.db.repositories.documents import list_all_document_folder_links
 from src.utils.utils import setup_logging
 
 setup_logging()
@@ -19,16 +26,7 @@ def slugify(name: str) -> str:
 
 
 def get_folder(folder_id: int) -> dict | None:
-    supabase = get_supabase()
-    response = (
-        supabase.table("document_folders")
-        .select("*")
-        .eq("id", folder_id)
-        .execute()
-    )
-    if not response.data:
-        return None
-    return response.data[0]
+    return get_folder_by_id(folder_id)
 
 
 def get_folder_breadcrumb(folder_id: int):
@@ -39,7 +37,10 @@ def get_folder_breadcrumb(folder_id: int):
             folder = get_folder(current_id)
             if not folder:
                 break
-            chain.insert(0, {"id": folder["id"], "name": folder["name"], "path": folder["path"]})
+            chain.insert(
+                0,
+                {"id": folder["id"], "name": folder["name"], "path": folder["path"]},
+            )
             current_id = folder.get("parent_id")
         return {"status": "success", "data": chain}
     except Exception as e:
@@ -50,30 +51,23 @@ def get_folder_breadcrumb(folder_id: int):
 def list_folders(parent_id: int | None = None):
     """List child folders for a parent. parent_id=None returns root-level folders."""
     try:
-        supabase = get_supabase()
-        query = supabase.table("document_folders").select("*").order("name")
-        if parent_id is None:
-            query = query.is_("parent_id", "null")
-        else:
-            query = query.eq("parent_id", parent_id)
-
-        folders = query.execute()
-        all_folders = supabase.table("document_folders").select("id, parent_id").execute()
+        folders = repo_list_folders(parent_id)
+        all_folders = list_all_folder_links()
         child_counts: dict[int, int] = {}
-        for row in all_folders.data or []:
+        for row in all_folders:
             pid = row.get("parent_id")
             if pid is not None:
                 child_counts[pid] = child_counts.get(pid, 0) + 1
 
-        docs = supabase.table("documents").select("id, folder_id").execute()
+        docs = list_all_document_folder_links()
         doc_counts: dict[int, int] = {}
-        for doc in docs.data or []:
+        for doc in docs:
             fid = doc.get("folder_id")
             if fid is not None:
                 doc_counts[fid] = doc_counts.get(fid, 0) + 1
 
         data = []
-        for folder in folders.data or []:
+        for folder in folders:
             row = dict(folder)
             row["subfolder_count"] = child_counts.get(folder["id"], 0)
             row["document_count"] = doc_counts.get(folder["id"], 0)
@@ -98,7 +92,6 @@ def get_or_create_folder_for_path(path_segments: list[str]) -> int:
       - HR        (parent_id=None, path="hr")
       - Policies  (parent_id=<HR id>, path="hr/policies")
     """
-    supabase = get_supabase()
     parent_id: int | None = None
     current_path = ""
 
@@ -106,35 +99,16 @@ def get_or_create_folder_for_path(path_segments: list[str]) -> int:
         slug = slugify(segment)
         current_path = f"{current_path}/{slug}" if current_path else slug
 
-        existing = (
-            supabase.table("document_folders")
-            .select("id")
-            .eq("path", current_path)
-            .limit(1)
-            .execute()
+        folder = get_or_create_folder(
+            name=segment.strip(),
+            slug=slug,
+            path=current_path,
+            parent_id=parent_id,
+            description="",
+            created_by="sharepoint_sync",
         )
-        if existing.data:
-            parent_id = existing.data[0]["id"]
-            continue
-
-        response = (
-            supabase.table("document_folders")
-            .insert(
-                {
-                    "name": segment.strip(),
-                    "slug": slug,
-                    "path": current_path,
-                    "parent_id": parent_id,
-                    "description": "",
-                    "created_by": "sharepoint_sync",
-                }
-            )
-            .execute()
-        )
-        if not response.data:
-            raise Exception(f"Failed to create folder at path {current_path}")
-        parent_id = response.data[0]["id"]
-        logger.info(f"Created folder '{segment}' at path {current_path} (id={parent_id})")
+        parent_id = folder["id"]
+        logger.info(f"Created or reused folder '{segment}' at path {current_path} (id={parent_id})")
 
     if parent_id is None:
         raise Exception("Cannot create folder for empty path segments")
@@ -147,24 +121,22 @@ def delete_empty_folders() -> int:
     Repeats until no more empty folders are found (handles nested empties).
     Returns total count of deleted folders.
     """
-    supabase = get_supabase()
     total_deleted = 0
 
     while True:
-        all_folders = supabase.table("document_folders").select("id, parent_id").execute()
-        docs = supabase.table("documents").select("folder_id").execute()
+        all_folders = list_all_folder_links()
+        docs = list_all_document_folder_links()
 
-        folder_ids = {f["id"] for f in (all_folders.data or [])}
-        parent_ids = {f["parent_id"] for f in (all_folders.data or []) if f.get("parent_id")}
-        doc_folder_ids = {d["folder_id"] for d in (docs.data or []) if d.get("folder_id")}
+        folder_ids = {f["id"] for f in all_folders}
+        parent_ids = {f["parent_id"] for f in all_folders if f.get("parent_id")}
+        doc_folder_ids = {d["folder_id"] for d in docs if d.get("folder_id")}
 
-        # A folder is empty if it has no sub-folders and no documents
         empty_ids = folder_ids - parent_ids - doc_folder_ids
         if not empty_ids:
             break
 
         for fid in empty_ids:
-            supabase.table("document_folders").delete().eq("id", fid).execute()
+            delete_folder(fid)
             logger.info(f"Deleted empty folder id={fid}")
 
         total_deleted += len(empty_ids)

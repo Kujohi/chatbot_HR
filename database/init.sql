@@ -1,31 +1,13 @@
--- Create users table extending Supabase auth
+-- Create application-owned users table for Microsoft login sessions
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS public.users (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
     name VARCHAR(255),
     role VARCHAR(50) DEFAULT 'user', -- 'admin', 'user', etc.
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
-
--- Function to handle new user signup
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.users (id, name, role)
-  VALUES (
-    new.id,
-    new.raw_user_meta_data->>'full_name',
-    'user' -- Default role
-  );
-  RETURN new;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Trigger for new user signup
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- Create threads table
 CREATE TABLE IF NOT EXISTS public.threads (
@@ -36,7 +18,6 @@ CREATE TABLE IF NOT EXISTS public.threads (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-DROP TABLE IF EXISTS chat_conversations;
 
 CREATE TABLE chat_conversations (
     id SERIAL PRIMARY KEY,
@@ -48,9 +29,6 @@ CREATE TABLE chat_conversations (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
-DROP TABLE IF EXISTS document_chunks;
-DROP TABLE IF EXISTS documents;
 
 CREATE TABLE document_folders (
     id SERIAL PRIMARY KEY,
@@ -85,9 +63,17 @@ CREATE TABLE documents (
 CREATE TABLE document_chunks (
     id SERIAL PRIMARY KEY,
     document_id INT NOT NULL,
-    chunk_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+    chunk_id UUID,
+    vector_key TEXT NOT NULL UNIQUE,
     content TEXT NOT NULL DEFAULT '',
     metadata JSONB NOT NULL DEFAULT '{}',
+    embedding vector(3072),
+    is_document BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_document_chunks_document_id FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_is_document ON document_chunks(is_document);
+CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON document_chunks USING hnsw (embedding vector_cosine_ops);
