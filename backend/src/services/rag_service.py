@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict
 
+from src.services.gemini_config import GEMINI_CHAT_MODEL
 from src.services.retrieval_service import search_documents
 from src.services.llm import chat_complete
 from src.services.rewriter import rewrite_query_hypo_answers
@@ -108,7 +109,7 @@ def bot_rag_answer_message(standalone_question):
         len(image_documents),
     )
 
-    assistant_answer = chat_complete(structured_messages)
+    assistant_answer = chat_complete(structured_messages, model_name=GEMINI_CHAT_MODEL)
 
     logger.info("Bot RAG reply generated successfully")
     return assistant_answer

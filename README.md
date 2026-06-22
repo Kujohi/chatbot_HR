@@ -137,6 +137,9 @@ Tạo file `backend/.env` từ file mẫu và điền các giá trị:
 ```env
 # Google Gemini API
 GEMINI_API_KEY="AIzaSyChpUS..."
+GEMINI_CHAT_MODEL="gemini-3.5-flash"
+GEMINI_UTILITY_MODEL="gemini-2.5-flash-lite"
+GEMINI_EMBEDDING_MODEL="gemini-embedding-2"
 
 # PostgreSQL + pgvector
 

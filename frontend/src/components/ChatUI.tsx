@@ -138,7 +138,7 @@ export default function ChatUI() {
   
   // Sync State
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<{type: "success" | "error" | null, message: string}>({type: null, message: ""});
+  const [syncStatus, setSyncStatus] = useState<{type: "success" | "error" | "info" | null, message: string}>({type: null, message: ""});
   // Chunk Modal State
   const [selectedChunk, setSelectedChunk] = useState<any>(null);
   const [isChunkModalOpen, setIsChunkModalOpen] = useState(false);
@@ -234,7 +234,12 @@ export default function ChatUI() {
     try {
       const response = await fetch(`${API_BASE}/sync`, { method: "POST", credentials: "include" });
       const data = await response.json();
-      if (data.status === "success") {
+      if (response.status === 409) {
+        setSyncStatus({ type: "info", message: data.detail || data.message || "Sync is already running" });
+      } else if (data.status === "accepted") {
+        setSyncStatus({ type: "info", message: data.message || "Sync started in background" });
+        loadCurrentDirectory();
+      } else if (data.status === "success") {
         const d = data.data;
         const parts: string[] = [];
         if (d.new > 0) parts.push(`${d.new} new`);
@@ -245,7 +250,7 @@ export default function ChatUI() {
         setSyncStatus({ type: "success", message: `Sync complete: ${parts.join(", ") || "no changes"}` });
         loadCurrentDirectory();
       } else {
-        setSyncStatus({ type: "error", message: data.message || "Sync failed" });
+        setSyncStatus({ type: "error", message: data.detail || data.message || "Sync failed" });
       }
     } catch (error) {
       setSyncStatus({ type: "error", message: "Failed to sync. Is the backend running?" });
@@ -704,7 +709,7 @@ export default function ChatUI() {
                   </button>
                 </div>
                 {syncStatus.message && (
-                  <p className={`w-full text-sm ${syncStatus.type === "error" ? "text-red-600" : "text-green-600"}`}>
+                  <p className={`w-full text-sm ${syncStatus.type === "error" ? "text-red-600" : syncStatus.type === "info" ? "text-blue-600" : "text-green-600"}`}>
                     {syncStatus.message}
                   </p>
                 )}

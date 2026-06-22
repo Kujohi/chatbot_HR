@@ -6,6 +6,7 @@ from typing import List
 from rapidfuzz import fuzz
 from pydantic import BaseModel, Field
 
+from src.services.gemini_config import GEMINI_UTILITY_MODEL
 from src.services.llm import chat_complete_with_structured
 from src.services.retrieval_service import search_document_summaries
 
@@ -40,6 +41,7 @@ def filter_documents(standalone_question: str, limit: int = 5) -> List[str]:
             {"role": "user", "content": user_prompt},
         ],
         DocumentPaths,
+        model_name=GEMINI_UTILITY_MODEL,
     )
 
     mapped_paths: List[str] = []

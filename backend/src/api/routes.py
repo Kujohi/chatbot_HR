@@ -60,6 +60,23 @@ async def _sync_loop():
         await asyncio.sleep(SYNC_INTERVAL)
 
 
+async def _run_sync_job(trigger: str) -> None:
+    """Run a single SharePoint sync cycle in the background."""
+    from src.services.sharepoint_sync_service import run_sync
+
+    if _sync_lock.locked():
+        logger.warning("%s sync requested but a sync cycle is already in progress", trigger)
+        return
+
+    async with _sync_lock:
+        logger.info("%s sync started", trigger)
+        try:
+            result = await asyncio.to_thread(run_sync)
+            logger.info("%s sync finished: %s", trigger, result.to_dict())
+        except Exception as e:
+            logger.error("%s sync failed: %s", trigger, e)
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -178,17 +195,10 @@ async def trigger_sync():
     """Manually trigger a SharePoint sync (admin use)."""
     if _sync_lock.locked():
         logger.warning("Manual sync requested but a sync cycle is already in progress")
-        return {"status": "error", "message": "A sync cycle is already in progress"}
+        raise HTTPException(status_code=409, detail="A sync cycle is already in progress")
 
-    async with _sync_lock:
-        logger.info("Manual sync triggered via API")
-        from src.services.sharepoint_sync_service import run_sync
-        try:
-            result = await asyncio.to_thread(run_sync)
-            return {"status": "success", "data": result.to_dict()}
-        except Exception as e:
-            logger.error(f"Manual sync failed: {e}")
-            return {"status": "error", "message": str(e)}
+    asyncio.create_task(_run_sync_job("Manual"))
+    return {"status": "accepted", "message": "Sync started in background"}
 
 
 @router.get("/documents/{document_id}/view")

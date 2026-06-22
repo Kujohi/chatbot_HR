@@ -96,7 +96,7 @@ def search_vectors(
     where_sql = " AND ".join(clauses)
     query = f"""
         WITH query_vector AS (
-            SELECT %s AS query_embedding
+            SELECT %s::vector AS query_embedding
         )
         SELECT
             id,

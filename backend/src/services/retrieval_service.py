@@ -7,11 +7,12 @@ from typing import Dict, List
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from src.db.repositories.vectors import search_vectors
+from src.services.gemini_config import GEMINI_EMBEDDING_MODEL
 from src.services.document_service import get_scanned_storage_paths
 from src.services.image_document_service import load_scanned_document_images
 
 logger = logging.getLogger(__name__)
-embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2")
+embeddings = GoogleGenerativeAIEmbeddings(model=GEMINI_EMBEDDING_MODEL)
 
 
 def format_docs_context(docs: List[Dict]) -> str:

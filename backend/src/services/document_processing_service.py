@@ -8,6 +8,8 @@ import requests
 from uuid import uuid4
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+from src.services.gemini_config import GEMINI_EMBEDDING_MODEL
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -17,7 +19,7 @@ from src.db.repositories.documents import (
 )
 from src.db.repositories.vectors import delete_vectors_by_keys, upsert_document_vectors
 
-_embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2")
+_embeddings = GoogleGenerativeAIEmbeddings(model=GEMINI_EMBEDDING_MODEL)
 
 
 def _load_pdf(file_url: str) -> list[Document]:

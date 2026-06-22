@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from src.services.gemini_config import GEMINI_CHAT_MODEL, GEMINI_UTILITY_MODEL
 from src.services.llm import chat_complete, chat_complete_with_structured
 from src.services.rag_service import bot_rag_answer_message
 from src.services.rewriter import summarized_question
@@ -38,6 +39,7 @@ def detect_route(standalone_question: str) -> str:
             {"role": "user", "content": standalone_question},
         ],
         RouteModel,
+        model_name=GEMINI_UTILITY_MODEL,
     )
     logger.info("Route result: %s", result)
     return result.route
@@ -64,4 +66,4 @@ def bot_route_answer_message(history, question: str):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": standalone_question},
     ]
-    return chat_complete(messages)
+    return chat_complete(messages, model_name=GEMINI_CHAT_MODEL)

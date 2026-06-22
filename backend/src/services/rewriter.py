@@ -5,6 +5,7 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
+from src.services.gemini_config import GEMINI_UTILITY_MODEL
 from src.services.llm import chat_complete, chat_complete_with_structured
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,8 @@ Quy tắc:
         [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
-        ]
+        ],
+        model_name=GEMINI_UTILITY_MODEL,
     )
 
 
@@ -72,6 +74,7 @@ def rewrite_query_hypo_answers(standalone_question: str, num_hypo_answers: int =
             {"role": "user", "content": user_prompt},
         ],
         HypoAnswers,
+        model_name=GEMINI_UTILITY_MODEL,
     )
     return result.hypo_answers
 
@@ -97,5 +100,6 @@ def rewrite_path_to_summary(path: str) -> str:
         [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
-        ]
+        ],
+        model_name=GEMINI_UTILITY_MODEL,
     )
