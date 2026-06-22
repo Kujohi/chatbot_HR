@@ -1,25 +1,34 @@
-from typing import List, Dict
+from __future__ import annotations
+
 import logging
 import unicodedata
+from typing import Dict, List
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from src.db.repositories.vectors import search_vectors
 
+from src.db.repositories.vectors import search_vectors
 from src.services.document_service import get_scanned_storage_paths
 from src.services.image_document_service import load_scanned_document_images
 
 logger = logging.getLogger(__name__)
 embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2")
 
+
 def format_docs_context(docs: List[Dict]) -> str:
     """
     Format documents context
     """
     doc_context = ""
-    for i,doc in enumerate(docs):
-        page_number = doc['metadata'].get('page_label') or doc['metadata'].get('page') or 'Unknown'
-        doc_context += f"Document {i+1} ('chunk_id': {doc['metadata']['chunk_id']}, 'page_number': {page_number}, 'source': {doc['metadata']['title']}): {doc['page_content']}\n"
+    for i, doc in enumerate(docs):
+        metadata = doc.get("metadata") or {}
+        page_number = metadata.get("page_label") or metadata.get("page") or "Unknown"
+        doc_context += (
+            f"Document {i + 1} ('chunk_id': {metadata.get('chunk_id')}, "
+            f"'page_number': {page_number}, 'source': {metadata.get('title')}): "
+            f"{doc.get('page_content', '')}\n"
+        )
     return doc_context
+
 
 def search_document_summaries(query: str, limit: int = 5) -> List[str]:
     """
@@ -28,6 +37,7 @@ def search_document_summaries(query: str, limit: int = 5) -> List[str]:
     """
     query_embedding = embeddings.embed_query(query)
     docs = search_vectors(query_embedding, limit=limit, is_document=True)
+
     document_paths: List[str] = []
     seen_paths = set()
     for doc in docs:
@@ -35,7 +45,8 @@ def search_document_summaries(query: str, limit: int = 5) -> List[str]:
         if path and path not in seen_paths:
             seen_paths.add(path)
             document_paths.append(path)
-    logger.info(f"Matched {len(document_paths)} document paths for query: {query}")
+
+    logger.info("Matched %s document paths for query: %s", len(document_paths), query)
     return document_paths
 
 
@@ -50,9 +61,9 @@ def search_text_chunks(document_paths: List[str], hypo_answers: List[str], limit
 
     all_docs: List[Dict] = []
     seen_contents = set()
-    logger.info(f"Search chunks for storage_paths={document_paths}, queries: {hypo_answers}")
+    logger.info("Search chunks for storage_paths=%s, queries: %s", document_paths, hypo_answers)
     for query in hypo_answers:
-        logger.info(f"Search chunks for query: {query}")
+        logger.info("Search chunks for query: %s", query)
         query_embedding = embeddings.embed_query(query)
         docs = search_vectors(
             query_embedding,
@@ -61,11 +72,18 @@ def search_text_chunks(document_paths: List[str], hypo_answers: List[str], limit
             storage_paths=document_paths,
         )
         for doc in docs:
-            content_hash = hash(doc.get("content", ""))
+            content = doc.get("content", "")
+            content_hash = hash(content)
             if content_hash not in seen_contents:
                 seen_contents.add(content_hash)
-                all_docs.append({"page_content": doc.get("content", ""), "metadata": doc.get("metadata") or {}})
-    logger.info(f"Retrieved {len(all_docs)} chunks for hypothesis answers")
+                all_docs.append(
+                    {
+                        "page_content": content,
+                        "metadata": doc.get("metadata") or {},
+                    }
+                )
+
+    logger.info("Retrieved %s chunks for hypothesis answers", len(all_docs))
     return format_docs_context(all_docs)
 
 
@@ -90,11 +108,3 @@ def search_documents(document_paths: List[str], hypo_answers: List[str], limit: 
         len(image_documents),
     )
     return {"text_context": text_context, "image_documents": image_documents}
-
-if __name__ == "__main__":
-    # paths = search_document_summaries("điều kiện dành cho nhân viên nấu bún chả là gì?")
-    # hypo_answers = ["điều kiện dành cho nhân viên nấu bún chả là gì?"]
-    # print(search_documents(paths, hypo_answers, limit=2))
-    document_paths = ["1. STDC & MTCV các phòng ban/1. Khối F&B/L'amuse Gourmet Cafe - Trần Não/Định Biên Nhân sự - L'Amuse Gourmet Cafe Trần Não.pdf", "1. STDC & MTCV các phòng ban/1. Khối F&B/L'amuse + YGS/20240601_Nhân viên thu ngân - pha chế - phục vụ.pdf"]
-    # print(get_scanned_storage_paths(document_paths))
-    print(search_documents(document_paths, []))

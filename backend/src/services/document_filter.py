@@ -1,22 +1,24 @@
+from __future__ import annotations
+
 import logging
 from typing import List
 
+from rapidfuzz import fuzz
 from pydantic import BaseModel, Field
 
 from src.services.llm import chat_complete_with_structured
 from src.services.retrieval_service import search_document_summaries
-from rapidfuzz import fuzz
 
 logger = logging.getLogger(__name__)
+
 
 class DocumentPaths(BaseModel):
     document_paths: List[str] = Field(description="List of document paths, each path is a string")
 
+
 def format_document_path(document_paths: List[str]) -> str:
-    formatted_document_paths = ""
-    for document_path in document_paths:
-        formatted_document_paths += f"{document_path}\n"
-    return formatted_document_paths
+    return "\n".join(document_paths)
+
 
 def filter_documents(standalone_question: str, limit: int = 5) -> List[str]:
     """
@@ -32,12 +34,15 @@ def filter_documents(standalone_question: str, limit: int = 5) -> List[str]:
     Câu hỏi: {standalone_question}
     Các đường dẫn tài liệu được cung cấp: \n{formatted_document_paths}
     """
-    result = chat_complete_with_structured([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ], DocumentPaths)
-    
-    mapped_paths = []
+    result = chat_complete_with_structured(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        DocumentPaths,
+    )
+
+    mapped_paths: List[str] = []
     for llm_path in result.document_paths:
         best_match = None
         best_score = 0
@@ -49,9 +54,11 @@ def filter_documents(standalone_question: str, limit: int = 5) -> List[str]:
         if best_score >= 90 and best_match:
             mapped_paths.append(best_match)
         else:
-            logger.warning(f"Could not map LLM path '{llm_path}' to original path. Best match was '{best_match}' with score {best_score}%")
-            
-    return mapped_paths
+            logger.warning(
+                "Could not map LLM path '%s' to original path. Best match was '%s' with score %s%%",
+                llm_path,
+                best_match,
+                best_score,
+            )
 
-if __name__ == "__main__":
-    print(filter_documents("Quy định đồng phục cho nhân viên Skyshop tại công ty Menas là gì?"))
+    return mapped_paths

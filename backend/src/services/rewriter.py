@@ -1,14 +1,20 @@
-from src.services.llm import chat_complete, chat_complete_with_structured
-from typing import List
+from __future__ import annotations
+
 import logging
+from typing import List
+
 from pydantic import BaseModel, Field
 
+from src.services.llm import chat_complete, chat_complete_with_structured
+
 logger = logging.getLogger(__name__)
+
 
 class HypoAnswers(BaseModel):
     hypo_answers: List[str] = Field(description="List of hypothesis answers")
 
-def summarized_question(history, question):
+
+def summarized_question(history, question: str) -> str:
     """
     Rewrite a question to a standalone question
     """
@@ -36,12 +42,13 @@ Quy tắc:
     Câu hỏi hiện tại cần viết lại:
     {question}
     """
-    result = chat_complete([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ])
+    return chat_complete(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
 
-    return result
 
 def rewrite_query_hypo_answers(standalone_question: str, num_hypo_answers: int = 3) -> List[str]:
     """
@@ -59,14 +66,17 @@ def rewrite_query_hypo_answers(standalone_question: str, num_hypo_answers: int =
     Câu hỏi hiện tại:
     {standalone_question}
     """
-    result = chat_complete_with_structured([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ], HypoAnswers)
-
+    result = chat_complete_with_structured(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        HypoAnswers,
+    )
     return result.hypo_answers
 
-def rewrite_path_to_summary(path: str):
+
+def rewrite_path_to_summary(path: str) -> str:
     """
     Rewrite a path to a summary
     """
@@ -83,12 +93,9 @@ def rewrite_path_to_summary(path: str):
     Đường dẫn tài liệu:
     {path}
     """
-    result = chat_complete([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ])
-    return result
-
-if __name__ == "__main__":
-    result = rewrite_path_to_summary("My Drive/2. Nội quy Công ty, Store, Quy định 5S/Nội quy 5S - Văn phòng 58 NĐC & 60A Trường Sơn/20250526_NỘI QUY VỆ SINH VĂN PHÒNG 58.final - Lầu 11.pdf")
-    print(result)
+    return chat_complete(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )

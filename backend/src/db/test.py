@@ -1,6 +1,6 @@
 from src.db.postgres import fetch_one
 
 
-result = fetch_one("SELECT 1 AS ok")
-print(result)
-
+if __name__ == "__main__":
+    result = fetch_one("SELECT 1 AS ok")
+    print(result)

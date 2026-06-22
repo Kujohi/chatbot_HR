@@ -8,13 +8,11 @@ from src.db.repositories.documents import (
     get_document_by_folder_and_storage_path,
     get_document_by_id,
     get_document_by_sharepoint_item_id,
-    get_document_chunks,
     get_document_reference as repo_get_document_reference,
     insert_document,
     list_chunk_ids,
     list_documents,
     list_documents_by_storage_paths,
-    list_documents_with_sharepoint_ids,
     update_document,
 )
 from src.services.document_processing_service import (
@@ -24,7 +22,6 @@ from src.services.document_processing_service import (
     split_document,
     store_document_chunks,
 )
-from src.services.folder_service import get_folder
 from src.services.rewriter import rewrite_path_to_summary
 from src.utils.utils import setup_logging
 
@@ -48,10 +45,6 @@ def _cleanup_document_index(document_id: str) -> None:
             logger.warning(f"Failed to delete chunk vectors: {vector_error}")
 
     repo_delete_document_chunks(document_id)
-
-
-def _find_document_in_folder(folder_id: int, storage_path: str) -> dict | None:
-    return get_document_by_folder_and_storage_path(folder_id, storage_path)
 
 
 def rollback_document(document_id: str) -> None:

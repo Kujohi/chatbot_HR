@@ -95,6 +95,9 @@ def search_vectors(
 
     where_sql = " AND ".join(clauses)
     query = f"""
+        WITH query_vector AS (
+            SELECT %s AS query_embedding
+        )
         SELECT
             id,
             document_id,
@@ -102,14 +105,15 @@ def search_vectors(
             vector_key,
             content,
             metadata,
-            is_document,
-            1 - (embedding <=> %s) AS similarity
+            is_document
         FROM document_chunks
+        CROSS JOIN query_vector
         WHERE {where_sql}
-        ORDER BY embedding <=> %s
+        -- Keep ordering by raw cosine distance so pgvector can use the HNSW index.
+        ORDER BY embedding <=> query_vector.query_embedding
         LIMIT %s
     """
     vector = _to_vector(query_embedding)
-    params = [vector, *params, vector, limit]
+    params = [vector, *params, limit]
 
     return fetch_all(query, params)

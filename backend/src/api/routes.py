@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, Query, Request, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
@@ -197,9 +197,8 @@ async def view_document(document_id: str):
     Get the SharePoint web view URL for a document on-the-fly,
     and redirect the client to it.
     """
-    from src.db.repositories.documents import get_document_by_id
     from fastapi.responses import RedirectResponse
-    from fastapi import HTTPException
+    from src.db.repositories.documents import get_document_by_id
 
     try:
         doc = await asyncio.to_thread(get_document_by_id, int(document_id))
