@@ -280,20 +280,6 @@ Yêu cầu cài đặt **Python 3.10+** và **Node.js 20+**.
    ```
 4. Truy cập giao diện tại: [http://localhost:3000](http://localhost:3000).
 
----
-
-### Cách 3: Chạy thử Docker Single Container (Giống môi trường Render)
-Để kiểm tra xem container gộp có chạy đúng trước khi deploy:
-1. Đảm bảo cấu hình `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local`.
-2. Build Docker image từ thư mục gốc:
-   ```bash
-   docker build -t menas-hr-bot:latest .
-   ```
-3. Chạy Docker container:
-   ```bash
-   docker run -p 3000:3000 --env-file backend/.env -e PORT=3000 menas-hr-bot:latest
-   ```
-4. Truy cập giao diện tại [http://localhost:3000](http://localhost:3000).
 
 ---
 
