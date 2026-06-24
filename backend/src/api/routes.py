@@ -36,6 +36,20 @@ SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL_SECONDS", "10"))
 _sync_lock = asyncio.Lock()
 
 
+def _cors_allowed_origins() -> list[str]:
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if not raw:
+        return [
+            "http://localhost",
+            "http://localhost:3000",
+            "http://127.0.0.1",
+            "http://127.0.0.1:3000",
+        ]
+    if raw == "*":
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 async def _sync_loop():
     """Run SharePoint sync on startup and then every SYNC_INTERVAL seconds."""
     from src.services.sharepoint_sync_service import run_sync
@@ -93,12 +107,7 @@ app = FastAPI(lifespan=lifespan)
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost",
-        "http://localhost:3000",
-        "http://127.0.0.1",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

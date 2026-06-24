@@ -152,8 +152,8 @@ Tạo file `frontend/.env.local` với các nội dung sau:
 ```env
 # URL của Backend API (dùng để Next.js proxy request sang Backend)
 # Chạy local không docker: http://127.0.0.1:8000
-# Chạy bằng docker-compose: http://backend:8000
-NEXT_PUBLIC_BACKEND_URL="http://127.0.0.1:8000"
+# Chạy bằng docker-compose hoặc production sau reverse proxy: /api
+NEXT_PUBLIC_BACKEND_URL="/api"
 ```
 
 ---
@@ -164,7 +164,7 @@ Chọn một trong các cách dưới đây để chạy hệ thống ở máy c
 
 ### Cách 1: Chạy bằng Docker Compose (Khuyên dùng)
 Yêu cầu đã cài đặt **Docker** và **Docker Desktop**.
-1. Đảm bảo file `frontend/.env.local` có cấu hình `NEXT_PUBLIC_BACKEND_URL=http://backend:8000`.
+1. Đảm bảo file `frontend/.env.local` có cấu hình `NEXT_PUBLIC_BACKEND_URL=/api`.
 2. Tại thư mục gốc của dự án, chạy lệnh:
    ```bash
    docker-compose up --build
@@ -199,7 +199,7 @@ Yêu cầu cài đặt **Python 3.10+** và **Node.js 20+**.
    ```bash
    cd frontend
    ```
-2. Đảm bảo cấu hình `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local`.
+2. Đảm bảo cấu hình `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local` khi chạy local.
 3. Cài đặt thư viện và chạy môi trường dev:
    ```bash
    npm install
@@ -211,7 +211,7 @@ Yêu cầu cài đặt **Python 3.10+** và **Node.js 20+**.
 
 ### Cách 3: Chạy thử Docker Single Container (Giống môi trường Render)
 Để kiểm tra xem container gộp có chạy đúng trước khi deploy:
-1. Đảm bảo cấu hình `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local`.
+1. Đảm bảo cấu hình `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` trong file `frontend/.env.local` khi chạy local.
 2. Build Docker image từ thư mục gốc:
    ```bash
    docker build -t menas-hr-bot:latest .
@@ -238,7 +238,7 @@ Dự án đã được thiết kế tối ưu hóa để deploy lên **Render** 
 4. Thêm các biến môi trường cấu hình tại mục **Environment** trên Render:
    * Tất cả các biến môi trường trong file `backend/.env` (Gemini, SharePoint, PostgreSQL).
    * Các biến môi trường frontend cần thiết:
-     - `NEXT_PUBLIC_BACKEND_URL` = `http://127.0.0.1:8000` (FastAPI chạy nội bộ bên trong cùng container).
+     - `NEXT_PUBLIC_BACKEND_URL` = `/api` khi đi qua reverse proxy, hoặc `http://127.0.0.1:8000` khi chạy local.
 5. Nhấn **Deploy** và đợi Render build & start. Hệ thống sẽ tự nhận cổng dịch vụ thông qua biến `$PORT` được Render cấp phát và chuyển tiếp yêu cầu đến Next.js trên cổng đó.
 
 ---

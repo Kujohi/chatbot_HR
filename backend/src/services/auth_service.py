@@ -109,7 +109,9 @@ def _get_redirect_uri(request: Request) -> str:
     if MSAL_REDIRECT_URI:
         return MSAL_REDIRECT_URI
     prefix = _get_public_prefix(request)
-    return f"{_get_public_base_url(request)}{prefix}/auth/callback"
+    if prefix:
+        return f"{_get_public_base_url(request)}{prefix}/auth/callback"
+    return f"{_get_public_base_url(request)}/api/auth/callback"
 
 
 def _get_return_to(request: Request, provided: str | None = None) -> str:
