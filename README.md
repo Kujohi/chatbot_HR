@@ -5,7 +5,7 @@ Dự án **Menas HR Bot** là một hệ thống Trợ lý ảo Nhân sự đư�
 ---
 
 ## 📌 Phân Mục Tài Liệu
-* 📖 [Hướng dẫn Sử dụng chi tiết (User Guide)](file:///Users/doduyhiep/HR_AI/Menas_HR_bot/USER_GUIDE.md) - Tài liệu dành cho quản trị viên và người dùng cuối.
+* 📖 [Hướng dẫn Sử dụng chi tiết (User Guide)] - Tài liệu dành cho quản trị viên và người dùng cuối.
 
 ---
 
@@ -22,67 +22,133 @@ Ví dụ: Sơ đồ tương tác giữa Frontend (Next.js) <-> Backend (FastAPI)
 
 ---
 
-### 🔄 Luồng Hoạt Động (Data Flow)
+### 🔄 Luồng Hoạt Động (Data Flow) & Kiến Trúc Kỹ Thuật Chi Tiết
 
-#### 1. Luồng Tải lên & Xử lý Tài liệu (Indexing Pipeline)
-```
-[File PDF/Ảnh] ──> [Tải lên Frontend] ──> [FastAPI Backend]
-                                                 │
-      ┌──────────────────────────────────────────┴──────────────────────────────────────────┐
-      ▼ (Lưu trữ file gốc)                                                                  ▼ (Xử lý văn bản)
-[Supabase Storage]                                                                 [Đọc & Trích xuất chữ]
-                                                                                            │
-                                                                                            ▼
-                                                                                   [Cắt nhỏ thành Chunks]
-                                                                                            │
-                                                                       ┌────────────────────┴────────────────────┐
-                                                                       ▼ (Tạo Vector)                            ▼ (Lưu Metadata)
-                                                               [Gemini Embedding]                       [Supabase PostgreSQL]
-                                                                 (embedding-2)                        (Thư mục, Tài liệu, Chunks)
-                                                                       │
-                                                                       ▼
-                                                                [Pinecone DB]
-```
-1. **Upload**: Quản trị viên tải tài liệu (dạng PDF hoặc hình ảnh) lên một thư mục cụ thể thông qua giao diện Frontend.
-2. **Lưu trữ**: File gốc được tải lên **Supabase Storage**. Đồng thời thông tin tài liệu được ghi nhận vào bảng `documents` trong **Supabase PostgreSQL**.
-3. **Trích xuất & Cắt nhỏ (Chunking)**: Backend FastAPI sử dụng các thư viện xử lý tài liệu (`PyMuPDF`/`pdf_image.py`) để trích xuất văn bản từ PDF/Hình ảnh. Văn bản sau đó được chia nhỏ thành các đoạn ngắn (chunks) có độ dài tối ưu kèm theo metadata.
-4. **Nhúng Vector (Embedding)**: Mỗi chunk văn bản được gửi qua **Google Gemini API** (model `gemini-embedding-2`) để tạo ra vector đặc trưng 3072 chiều.
-5. **Đồng bộ hóa Vector DB & Relational DB**:
-   - Vector và Metadata của chunk được lưu vào **Pinecone Vector Database**.
-   - Văn bản thô của chunk và id liên kết được lưu vào bảng `document_chunks` của **Supabase PostgreSQL** để đối chiếu khi hiển thị nguồn tham chiếu.
+Hệ thống triển khai mô hình RAG hai cấp độ (Two-tier Retrieval RAG) kết hợp đa phương thức (Multimodal) nhằm tối ưu hóa việc tìm kiếm trên cả tài liệu văn bản chuẩn (Text-based) và tài liệu quét dạng hình ảnh (Scanned/Image-only PDFs).
 
 ---
 
-#### 2. Luồng Trò chuyện & Truy vấn (Retrieval-Augmented Generation - RAG Pipeline)
+#### 1. Luồng Đồng bộ & Chỉ mục Tài liệu (SharePoint Sync & Indexing Pipeline)
+
+Quy trình đồng bộ chạy tự động theo chu kỳ (cron job mỗi 5 phút hoặc khi khởi động) để đồng bộ thư mục tài liệu từ **SharePoint Drive** về hệ thống:
+
 ```
-[Người dùng gửi câu hỏi] ──> [Frontend] ──> [FastAPI Backend]
-                                                   │
-                                                   ▼
-                                      [Hóa vector câu hỏi bằng Gemini]
-                                                   │
-                                                   ▼ (Tìm kiếm ngữ cảnh tương đồng)
-                                            [Pinecone Vector DB]
-                                                   │
-                                                   ▼ (Trả về các chunks tương quan nhất)
-                                      [Lấy Chunks thô tương ứng từ Supabase]
-                                                   │
-                                                   ▼
-                                  [Tổng hợp Prompt: Ngữ cảnh + Câu hỏi]
-                                                   │
-                                                   ▼
-                                           [Google Gemini LLM]
-                                                   │
-                                                   ▼ (Trả về câu trả lời + Trích dẫn nguồn)
-[Hiển thị câu trả lời trực quan] <── [Frontend] <──┘
+[SharePoint Drive] ──(Sync 5m)──> [sharepoint_sync_service]
+                                          │
+                  ┌───────────────────────┴───────────────────────┐
+                  ▼                                               ▼
+        [Kiểm tra & Cập nhật]                            [Đọc file & Phân loại]
+        - Khớp sharepoint_item_id                        - Word/PDF văn bản -> Text Document
+        - So sánh modified timestamp                     - PDF scan/ảnh -> Image Document
+                  │                                               │
+                  ▼                                               ▼
+         [Cập nhật Supabase]                       [Tạo tóm tắt từ Storage Path]
+          (Bảng `documents`)                       (LLM rewrite path -> summary)
+                  │                                               │
+                  ▼                                               ▼
+         [Hủy index cũ nếu có]                     [Nhúng & Lưu Vector Summary]
+         (Nếu file bị sửa đổi)                      (isDocument=True -> Pinecone)
+                                                                  │
+                ┌─────────────────────────────────────────────────┤
+                ▼ (Nếu là Text Document)                          ▼ (Nếu là Image Document)
+      [Trích xuất & Chunking]                             [Không Chunk nội dung]
+      (PyMuPDF / docx loader)                             - Giữ nguyên liên kết file gốc
+                │                                         - Chỉ dùng Vector Summary
+                ▼                                           để định tuyến (routing)
+     [Lưu Chunk Text vào DB]
+     (Bảng `document_chunks`)
+                │
+                ▼
+     [Nhúng & Lưu Vector Chunk]
+      (chunk_id -> Pinecone)
 ```
-1. **Gửi câu hỏi**: Người dùng gửi tin nhắn hỏi về chính sách nhân sự thông qua giao diện chat.
-2. **Truy vấn Vector**: Backend FastAPI nhận câu hỏi, chuyển đổi câu hỏi thành vector bằng `gemini-embedding-2` và truy vấn trên **Pinecone** để tìm ra các đoạn văn bản có độ tương đồng ngữ nghĩa cao nhất.
-3. **Tổng hợp Ngữ cảnh (Context assembly)**: Hệ thống lấy nội dung văn bản thô của các đoạn tương ứng từ Supabase và tạo thành một Prompt hoàn chỉnh:
-   * *Ngữ cảnh: [Các đoạn tài liệu tìm thấy]*
-   * *Câu hỏi của người dùng: [Nội dung câu hỏi]*
-   * *Yêu cầu: Hãy trả lời câu hỏi dựa trên ngữ cảnh được cung cấp. Nếu không có thông tin, hãy báo không biết, không tự bịa ra thông tin.*
-4. **Sinh câu trả lời**: Prompt được gửi tới **Google Gemini LLM** để tạo câu trả lời tự nhiên, chính xác.
-5. **Phản hồi**: Câu trả lời kèm danh sách tài liệu tham chiếu (Citations) được trả về Frontend để hiển thị trực quan cho người dùng. Toàn bộ hội thoại được lưu vào bảng `chat_conversations` trên Supabase.
+
+##### Chi tiết các bước xử lý (`sharepoint_sync_service.py` & `document_processing_service.py`):
+1. **Quét và Phát hiện Thay đổi**: 
+   - Duyệt đệ quy SharePoint Drive thông qua Microsoft Graph API.
+   - So sánh `sharepoint_item_id` và timestamp `lastModifiedDateTime` với dữ liệu trong bảng `documents` của Supabase.
+   - Nếu tài liệu mới hoặc có thay đổi (`needs_reindex`), hệ thống sẽ tiến hành tải file tạm thời và kích hoạt quy trình chỉ mục. Các file bị xóa trên SharePoint cũng sẽ bị gỡ bỏ tương ứng khỏi Supabase và Pinecone.
+2. **Phân loại Tài liệu**:
+   - **Tài liệu Văn bản (Text Document)**: Bao gồm các tệp `.docx` và `.pdf` có chứa văn bản có thể trích xuất trực tiếp (sử dụng heuristic kiểm tra nếu có ít nhất một trang chứa trên `MIN_PAGE_TEXT_CHARS = 100` ký tự).
+   - **Tài liệu Quét (Image Document)**: Các file `.pdf` dạng scan ảnh (hoặc tệp sơ đồ hệ thống dạng `.drawio.pdf`) không có text thô.
+3. **Tạo Vector Định tuyến (Document Summary Routing)**:
+   - Dành cho **tất cả** tài liệu: LLM (`gemini-3.1-flash-lite` hoặc tương đương) phân tích đường dẫn thư mục và tên file (ví dụ: `HR/Policies/leave.pdf`) để tạo ra một bản tóm tắt dự đoán nội dung (`rewrite_path_to_summary`).
+   - Bản tóm tắt này được nhúng (embedded) bằng `gemini-embedding-2` và lưu vào Pinecone với cờ `isDocument: True` (không chunk). Đây là điểm cốt lõi để định tuyến câu hỏi đến đúng tài liệu ở bước truy vấn.
+4. **Xử lý Nội dung chi tiết (Chỉ áp dụng với Tài liệu Văn bản)**:
+   - Văn bản được tách từ tệp nhờ `PyMuPDF` (PDF) hoặc `python-docx` (DOCX). Đồng thời tự động sửa đổi một số lỗi font tiếng Việt phổ biến (như chữ `ư`, `Ư`).
+   - Chia nhỏ văn bản thành các đoạn (chunks) bằng `RecursiveCharacterTextSplitter` (kích thước chunk 1500 ký tự, overlap 100 ký tự).
+   - Lưu trữ văn bản thô của các chunk vào bảng `document_chunks` (Supabase).
+   - Nhúng từng chunk thành vector 3072 chiều và đẩy lên Pinecone với metadata đầy đủ (`document_id`, `storage_path`, `chunk_id`, `title`).
+
+---
+
+#### 2. Luồng Truy vấn & Trả lời (Retrieval-Augmented Generation - RAG Pipeline)
+
+Để tối ưu hóa độ chính xác và giảm thiểu việc LLM bị nhiễu bởi các tài liệu không liên quan, hệ thống áp dụng cơ chế truy vấn 2 bước (Two-step retrieval) kết hợp đa phương thức (Multimodal):
+
+```
+                  [Người dùng gửi câu hỏi]
+                              │
+                              ▼
+                 [Chuẩn hóa câu hỏi thành]
+                  [Standalone Question]
+                              │
+                              ▼
+           ┌──────────────────┴──────────────────┐
+           ▼                                     ▼
+ [Tạo 3 câu trả lời giả định]          [Tìm kiếm tài liệu liên quan]
+   (Hypothetical Answers)               (Embed Standalone Question)
+           │                                     │
+           │                                     ▼
+           │                           [Pinecone: Match Vector Summary]
+           │                            (Lọc ra top 10 storage_paths)
+           │                                     │
+           └──────────────────┬──────────────────┘
+                              ▼
+              [Truy vấn nội dung chi tiết]
+             (Scoped theo 10 storage_paths)
+                              │
+         ┌────────────────────┴────────────────────┐
+         ▼ (Đối với Text Documents)                ▼ (Đối với Image/Scanned Documents)
+  [Tìm kiếm Vector Chunks]                  [Lấy trực tiếp file_url của PDF]
+  - Dùng 3 Hypothetical Answers             (Không có text chunks để tìm kiếm)
+  - Lấy top chunks khớp nhất
+  - Lấy text thô tương ứng từ Supabase
+         │                                         │
+         └────────────────────┬────────────────────┘
+                              ▼
+                 [Xây dựng Multimodal Prompt]
+                 - Text Context từ các chunks
+                 - Các khối "image_url" trỏ trực tiếp
+                   đến link PDF scan trên Cloud
+                 - Standalone Question & Luật trích dẫn
+                              │
+                              ▼
+                   [Gọi Gemini 3.5 Flash]
+                   (Đọc cả text context & trực tiếp
+                    phân tích nội dung file PDF scan)
+                              │
+                              ▼
+               [Trả về Câu trả lời + Citations]
+```
+
+##### Chi tiết các bước xử lý (`rag_service.py`):
+1. **Chuẩn hóa & Mở rộng câu hỏi**:
+   - Lịch sử chat và tin nhắn mới nhất được gửi qua LLM để viết lại thành một câu hỏi độc lập duy nhất (**Standalone Question**), loại bỏ các từ ngữ mơ hồ hoặc tham chiếu cũ.
+   - Viết lại Standalone Question thành 3 câu trả lời giả định (**Hypothetical Answers**) khác nhau nhằm tăng diện tích tiếp xúc ngữ nghĩa khi tìm kiếm chi tiết.
+2. **Bước 1: Định tuyến Tài liệu (Document Filtering)**:
+   - Chuyển đổi Standalone Question thành vector và truy vấn trong Pinecone, chỉ tìm các vector có `isDocument: True`.
+   - Kết quả trả về danh sách top 10 đường dẫn tài liệu (`storage_path`) có khả năng chứa câu trả lời cao nhất.
+3. **Bước 2: Tìm kiếm ngữ cảnh chi tiết (Scoped Retrieval)**:
+   - Bộ lọc được cấu hình để giới hạn phạm vi tìm kiếm chỉ nằm trong 10 tài liệu đã tìm thấy ở Bước 1.
+   - **Đối với tài liệu văn bản thông thường**: Hệ thống dùng 3 Hypothetical Answers để tìm kiếm các vector chunk có độ tương quan cao nhất trên Pinecone, sau đó lấy nội dung text thô tương ứng từ bảng `document_chunks` của Supabase làm `text_context`.
+   - **Đối với tài liệu quét (scanned PDF)**: Hệ thống lấy thông tin tham chiếu và `file_url` trực tiếp của tài liệu từ Supabase.
+4. **Xây dựng Prompt đa phương thức (Multimodal Assembly)**:
+   - Hệ thống đính kèm phần ngữ cảnh văn bản thô vào Prompt.
+   - Đối với tài liệu scan/hình ảnh, hệ thống chèn trực tiếp các khối nội dung dạng `"image_url"` chứa URL của file PDF gốc để LLM tự đọc (Gemini có khả năng phân tích trực tiếp file PDF không cần chuyển đổi sang ảnh).
+   - Áp dụng các luật trích dẫn nguồn nghiêm ngặt (đối với văn bản: định dạng `[source - Trang page](chunk_id)`; đối với tài liệu quét: định dạng `[tên tài liệu - scan PDF](doc-document_id)`).
+5. **Sinh câu trả lời**:
+   - Gửi prompt đa phương thức đến **Google Gemini LLM** (`gemini-3.1-flash-lite` hoặc các dòng Gemini mới hỗ trợ xử lý file PDF trực tiếp) để tổng hợp câu trả lời tự nhiên, chính xác nhất và trả về cho người dùng kèm các link trích dẫn nguồn gốc.
 
 ---
 
@@ -228,27 +294,6 @@ Yêu cầu cài đặt **Python 3.10+** và **Node.js 20+**.
    docker run -p 3000:3000 --env-file backend/.env -e PORT=3000 menas-hr-bot:latest
    ```
 4. Truy cập giao diện tại [http://localhost:3000](http://localhost:3000).
-
----
-
-## ☁️ Hướng Dẫn Deploy Lên Render (Production Deployment)
-
-Dự án đã được thiết kế tối ưu hóa để deploy lên **Render** chỉ trong một Web Service duy nhất thông qua Dockerfile gộp ở thư mục gốc.
-
-### Các bước thực hiện:
-1. Đẩy mã nguồn dự án lên một kho chứa Git cá nhân (GitHub / GitLab).
-2. Đăng nhập vào tài liệu quản trị [Render Dashboard](https://dashboard.render.com/).
-3. Chọn **New +** -> **Blueprint** để deploy tự động thông qua file `render.yaml`.
-   * Hoặc nếu cấu hình thủ công: Chọn **Web Service**, chọn Git repository của bạn.
-   * **Runtime**: Chọn `Docker`.
-   * **Dockerfile Path**: `Dockerfile` (nằm ở thư mục gốc).
-4. Thêm các biến môi trường cấu hình tại mục **Environment** trên Render:
-   * Tất cả các biến môi trường trong file `backend/.env` (Gemini, Pinecone, Supabase keys).
-   * Các biến môi trường frontend cần thiết:
-     - `NEXT_PUBLIC_SUPABASE_URL`
-     - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-     - `NEXT_PUBLIC_BACKEND_URL` = `http://127.0.0.1:8000` (FastAPI chạy nội bộ bên trong cùng container).
-5. Nhấn **Deploy** và đợi Render build & start. Hệ thống sẽ tự nhận cổng dịch vụ thông qua biến `$PORT` được Render cấp phát và chuyển tiếp yêu cầu đến Next.js trên cổng đó.
 
 ---
 
